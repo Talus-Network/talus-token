@@ -4,7 +4,9 @@
 /// The TALUS token is the native token for the Nexus Protocol.
 module talus::talus;
 
-use sui::{coin::{Self, TreasuryCap, Coin}, dynamic_object_field as dof, url};
+use sui::coin::{Self, TreasuryCap, Coin};
+use sui::dynamic_object_field as dof;
+use sui::url;
 
 const TOTAL_TALUS_SUPPLY_TO_MINT: u64 = 10_000_000_000; // 10B TALUS
 const DECIMALS: u8 = 9;
