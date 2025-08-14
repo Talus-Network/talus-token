@@ -1,6 +1,3 @@
-// Copyright (c) Talus Network
-// SPDX-License-Identifier: Apache-2.0
-
 /// The TALUS token is the native token for the Nexus Protocol.
 module talus::talus;
 
