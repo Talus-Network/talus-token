@@ -15,6 +15,7 @@ read -p "Enter environment alias (default: local): " ENV_ALIAS
 read -p "Enter initial amount (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
 read -p "Enter exhcnage rate Talus/Sui (default: 10): " EXCHANGE_RATE
 read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
+read -p "Deploy and initialize faucet? (y/N): " DEPLOY_FAUCET
 
 
 # Set default values if no input provided
@@ -22,14 +23,13 @@ RPC_URL=${RPC_URL:-"http://127.0.0.1:9000"}
 ENV_ALIAS=${ENV_ALIAS:-"local"}
 EXCHANGE_RATE=${EXCHANGE_RATE:-10}
 WITHDRAWAL_PCT=${WITHDRAWAL_PCT:-50}
+DEPLOY_FAUCET=${DEPLOY_FAUCET:-"n"}
 
 if [ -z "$INIT_AMOUNT" ]; then
     SPLIT_AMOUNT=$DEFAULT_INIT
 else
     SPLIT_AMOUNT=$(_calculate "$TOTAL_AMOUNT-$INIT_AMOUNT")
 fi
-
-# ...existing code until setup client section...
 
 # Setup client if needed
 if ! $SUI client active-env | grep -q "$ENV_ALIAS"; then
@@ -49,23 +49,6 @@ _evalBg() {
     eval "$@" &>/dev/null & disown;
 }
 
-_getCoins() {
-    data=$($SUI client gas | awk -F '│' '/0x/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
-
-    counter=1
-
-    # Loop through each line
-    while IFS= read -r line; do
-        eval "coinId_$counter=\"$line\""
-        counter=$((counter + 1))
-    done <<< "$data"
-
-    # Print variables to verify
-    for i in $(seq 1 $((counter - 1))); do
-        eval "echo Coin ID \$i: \$coinId_$i"
-    done
-
-}
 
 # Get faucet coins if needed with retry
 _getFaucetCoins() {
@@ -129,20 +112,19 @@ echo "Talus coin at : \"$TalusCoin\""
 echo "Split coin"
 splitres=$($SUI client split-coin --coin-id $TalusCoin --amounts $SPLIT_AMOUNT --gas-budget 10000000)
 
-echo "Publishing Faucet Contract:"
-FaucetContractID=$($SUI client publish --gas-budget 30000000 ./faucet --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
-sleep 3
-echo "Faucet contract at: \"$FaucetContractID\""
+# Only deploy faucet if requested
+if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
+    echo "Publishing Faucet Contract:"
+    FaucetContractID=$($SUI client publish --gas-budget 30000000 ./faucet --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
+    sleep 3
+    echo "Faucet contract at: \"$FaucetContractID\""
 
-echo "Initiate faucet"
-FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function initiate --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI --args $TalusCoin --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT --json | jq -r '.objectChanges[] | select(.type == "created") |.objectId')
-echo "faucet at: $FaucetID"
-# Initiate Faucet between $SUI and $Talus NPC if needed
-# if [ -z "$NPCID" ]; then
-#     echo "Initiating NPC:"
-#     NPCID=$($SUI client call --package $PlayerContractID --module player --function initiate --args $coinId_3 --json | jq -r ".effects.created.[] | select(.owner.Shared) |.reference.objectId")
-#     sleep 10
-#     NPCEntity=$($SUI client dynamic-field $NPCID --json | jq -r '.data[] | select(.objectType | contains("entity::Entity")) | .objectId')
-#     echo "NPC at: \"$NPCID\""
-#     echo "NPC with entity: \"$NPCEntity\""
-# fi
+    echo "Initiate faucet"
+    FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function initiate \
+        --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI \
+        --args $TalusCoin --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT \
+        --json | jq -r '.objectChanges[] | select(.type == "created") |.objectId')
+    echo "faucet at: $FaucetID"
+else
+    echo "Skipping faucet deployment"
+fi

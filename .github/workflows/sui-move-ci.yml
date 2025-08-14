@@ -1,0 +1,29 @@
+name: Sui Move CI
+
+on:
+  push:
+    branches: [ main, master, dev ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  SUI_REF: mainnet-v1.45.3
+
+jobs:
+  build-and-test:
+    name: (Sui Move) Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+      
+      - name: Fetch Sui CLI
+        uses: ./.github/actions/fetch-sui-cli
+        with:
+          sui_ref: ${{ env.SUI_REF }}
+      
+      - name: Install just
+        uses: taiki-e/install-action@just
+      
+      - name: Build and Test
+        run: just build-test

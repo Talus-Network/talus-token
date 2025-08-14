@@ -4,13 +4,15 @@
 /// The TALUS token is the native token for the Nexus Protocol.
 module talus::talus;
 
-use sui::{coin::{Self, TreasuryCap, Coin}, dynamic_object_field as dof, url};
+use sui::coin::{Self, TreasuryCap, Coin};
+use sui::dynamic_object_field as dof;
+use sui::url;
 
 const TOTAL_TALUS_SUPPLY_TO_MINT: u64 = 10_000_000_000; // 10B TALUS
 const DECIMALS: u8 = 9;
 const SYMBOL: vector<u8> = b"TALUS";
 const NAME: vector<u8> = b"TALUS Token";
-const DESCRIPTION: vector<u8> = b"The native token for the TALUSrus Protocol.";
+const DESCRIPTION: vector<u8> = b"The native token for the TALUS Protocol.";
 // todo need to update
 const ICON_URL: vector<u8> = b"https://talus.network/talus-icon.svg";
 
@@ -98,8 +100,7 @@ fun test_init() {
 
     let protected_treasury = test.take_shared<ProtectedTreasury>();
     let frost_per_TALUS = 10u64.pow(DECIMALS);
-    let talus_supply = 5_000_000_000;
-    assert!(protected_treasury.total_supply() == talus_supply * frost_per_TALUS);
+    assert!(protected_treasury.total_supply() == TOTAL_TALUS_SUPPLY_TO_MINT * frost_per_TALUS);
     test::return_shared(protected_treasury);
 
     let coin_metadata = test.take_immutable<coin::CoinMetadata<TALUS>>();
@@ -113,7 +114,7 @@ fun test_init() {
     );
     assert!(
         coin_metadata.get_icon_url() == option::some(
-            url::new_unsafe_from_bytes(b"https://www.TALUSrus.xyz/TALUS-icon.svg"),
+            url::new_unsafe_from_bytes(b"https://talus.network/talus-icon.svg"),
         ),
     );
 
@@ -130,13 +131,14 @@ fun test_burn() {
 
     let mut protected_treasury = test.take_shared<ProtectedTreasury>();
     let frost_per_TALUS = 10u64.pow(DECIMALS);
-    let talus_supply = 5_000_000_000;
-    assert!(protected_treasury.total_supply() == talus_supply * frost_per_TALUS);
+    assert!(protected_treasury.total_supply() == TOTAL_TALUS_SUPPLY_TO_MINT * frost_per_TALUS);
 
     let mut coin = test.take_from_sender<Coin<TALUS>>();
     let new_coin = coin.split(1000 * frost_per_TALUS, test.ctx());
     protected_treasury.burn(new_coin);
-    assert!(protected_treasury.total_supply() == (talus_supply - 1000) * frost_per_TALUS);
+    assert!(
+        protected_treasury.total_supply() == (TOTAL_TALUS_SUPPLY_TO_MINT - 1000) * frost_per_TALUS,
+    );
 
     test.return_to_sender(coin);
     test::return_shared(protected_treasury);

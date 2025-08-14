@@ -2,11 +2,8 @@
 name = "Talus"
 edition = "2024.beta"
 authors = ["Talus Labs <hi@taluslabs.com>"]
-# license = ""           # e.g., "MIT", "GPL", "Apache 2.0"
-# authors = ["..."]      # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]
 
 [dependencies]
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "testnet-v1.53.2" }
 
 [addresses]
 talus = "0x0"
