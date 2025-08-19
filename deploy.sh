@@ -128,3 +128,14 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
 else
     echo "Skipping faucet deployment"
 fi
+
+# echo "test mint"
+# $SUI client call --package $FaucetContractID --module faucet --function mint \
+#         --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI \
+#         --args $FaucetID --args <a gas coin id> \
+#         --dry-run
+# echo "test refund"
+# $SUI client call --package $FaucetContractID --module faucet --function refund \
+#         --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI \
+#         --args $FaucetID --args <a talus coin id> \
+#         --dry-run

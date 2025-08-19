@@ -82,18 +82,21 @@ public entry fun inject<Target, Base>(
 /// * `self` - Faucet to mint from
 /// * `base_coin` - Coin Base to exchange
 /// * `ctx` - Transaction context
-public fun mint<Target, Base>(
+public entry fun mint<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
     base_coin: &mut Coin<Base>,
     ctx: &mut TxContext,
-): Coin<Target> {
+) {
     let (max_mint, _) = self.max_withdrawal();
     let collateral = min(max_mint/self.exchange_rate, base_coin.value());
     let deposit = base_coin.split(collateral, ctx).into_balance();
 
     self.base_balance.join(deposit);
 
-    self.target_balance.split(collateral*self.exchange_rate).into_coin(ctx)
+    transfer::public_transfer(
+        self.target_balance.split(collateral*self.exchange_rate).into_coin(ctx),
+        ctx.sender(),
+    )
 }
 
 /// Refunds coin Base in exchange for returning coin Target at the fixed exchange rate.
@@ -103,11 +106,11 @@ public fun mint<Target, Base>(
 /// * `self` - Faucet to refund from
 /// * `target_coin` - Coin Target to return
 /// * `ctx` - Transaction context
-public fun refund<Target, Base>(
+public entry fun refund<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
     target_coin: &mut Coin<Target>,
     ctx: &mut TxContext,
-): Coin<Base> {
+) {
     // return at most 10% of Target
     let (_, max_collateral) = self.max_withdrawal();
     let allowed_collateral = min(max_collateral, target_coin.value()/self.exchange_rate);
@@ -115,7 +118,10 @@ public fun refund<Target, Base>(
 
     self.target_balance.join(deposit);
 
-    self.base_balance.split(allowed_collateral).into_coin(ctx)
+    transfer::public_transfer(
+        self.base_balance.split(allowed_collateral).into_coin(ctx),
+        ctx.sender(),
+    )
 }
 
 /// Returns the maximum withdrawal amounts for both coin types based on withdrawal_pct.
@@ -124,8 +130,8 @@ public fun refund<Target, Base>(
 /// * `(u64, u64)` - (max coin Target withdrawal, max coin Base withdrawal)
 public(package) fun max_withdrawal<Target, Base>(self: &BiFaucet<Target, Base>): (u64, u64) {
     (
-        (self.target_balance.value()*self.withdrawal_pct)/100,
-        (self.base_balance.value()*self.withdrawal_pct)/100,
+        (self.target_balance.value() / 100) * self.withdrawal_pct,
+        (self.base_balance.value() / 100) * self.withdrawal_pct,
     )
 }
 
