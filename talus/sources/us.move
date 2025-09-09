@@ -1,20 +1,19 @@
-/// The TALUS token is the native token for the Nexus Protocol.
-module talus::talus;
+module talus::us;
 
 use sui::coin::{Self, TreasuryCap, Coin};
 use sui::dynamic_object_field as dof;
 use sui::url;
 
-const TOTAL_TALUS_SUPPLY_TO_MINT: u64 = 10_000_000_000; // 10B TALUS
+const TOTAL_TALUS_SUPPLY_TO_MINT: u64 = 10_000_000_000; // 10B US
 const DECIMALS: u8 = 9;
-const SYMBOL: vector<u8> = b"TALUS";
+const SYMBOL: vector<u8> = b"US";
 const NAME: vector<u8> = b"TALUS Token";
-const DESCRIPTION: vector<u8> = b"The native token for the TALUS Protocol.";
+const DESCRIPTION: vector<u8> = b"The native token for the Talus Network.";
 // todo need to update
 const ICON_URL: vector<u8> = b"https://talus.network/talus-icon.svg";
 
-/// The OTW for the `TALUS` coin.
-public struct TALUS has drop {}
+/// The OTW for the `US` coin.
+public struct US has drop {}
 
 public struct ProtectedTreasury has key {
     id: UID,
@@ -26,13 +25,13 @@ public struct ProtectedTreasury has key {
 /// `TreasuryCap` from the `ProtectedTreasury` off-chain.
 public struct TreasuryCapKey has copy, drop, store {}
 
-/// Initializes the TALUS token and mints the total supply to the publisher.
+/// Initializes the US token and mints the total supply to the publisher.
 /// This also wraps the `TreasuryCap` in a `ProtectedTreasury` analogous to the SuiNS token.
 ///
 /// After publishing this, the `UpgradeCap` must be burned to ensure that the supply
-/// of minted TALUS cannot change.
+/// of minted US cannot change.
 #[allow(lint(share_owned))]
-fun init(otw: TALUS, ctx: &mut TxContext) {
+fun init(otw: US, ctx: &mut TxContext) {
     let (mut cap, metadata) = coin::create_currency(
         otw,
         DECIMALS,
@@ -43,7 +42,7 @@ fun init(otw: TALUS, ctx: &mut TxContext) {
         ctx,
     );
 
-    // Mint the total supply of TALUS.
+    // Mint the total supply of US.
     let frost_per_TALUS = 10u64.pow(DECIMALS);
     let total_supply_to_mint = TOTAL_TALUS_SUPPLY_TO_MINT * frost_per_TALUS;
     let minted_coin = cap.mint(total_supply_to_mint, ctx);
@@ -57,29 +56,29 @@ fun init(otw: TALUS, ctx: &mut TxContext) {
     dof::add(&mut protected_treasury.id, TreasuryCapKey {}, cap);
     transfer::share_object(protected_treasury);
 
-    // Transfer the minted TALUS to the publisher.
+    // Transfer the minted US to the publisher.
     transfer::public_transfer(minted_coin, ctx.sender());
 }
 
-/// Get the total supply of the TALUS token.
+/// Get the total supply of the US token.
 public fun total_supply(treasury: &ProtectedTreasury): u64 {
     treasury.borrow_cap().total_supply()
 }
 
-/// Burns a `Coin<TALUS>` from the sender.
-public fun burn(treasury: &mut ProtectedTreasury, coin: Coin<TALUS>) {
+/// Burns a `Coin<US>` from the sender.
+public fun burn(treasury: &mut ProtectedTreasury, coin: Coin<US>) {
     treasury.borrow_cap_mut().burn(coin);
 }
 
 // ===== Private Accessors =====
 
 /// Borrows the `TreasuryCap` from the `ProtectedTreasury`.
-fun borrow_cap(treasury: &ProtectedTreasury): &TreasuryCap<TALUS> {
+fun borrow_cap(treasury: &ProtectedTreasury): &TreasuryCap<US> {
     dof::borrow(&treasury.id, TreasuryCapKey {})
 }
 
 /// Borrows the `TreasuryCap` from the `ProtectedTreasury` as mutable.
-fun borrow_cap_mut(treasury: &mut ProtectedTreasury): &mut TreasuryCap<TALUS> {
+fun borrow_cap_mut(treasury: &mut ProtectedTreasury): &mut TreasuryCap<US> {
     dof::borrow_mut(&mut treasury.id, TreasuryCapKey {})
 }
 
@@ -92,7 +91,7 @@ use sui::test_scenario as test;
 fun test_init() {
     let user = @0xa11ce;
     let mut test = test::begin(user);
-    init(TALUS {}, test.ctx());
+    init(US {}, test.ctx());
     test.next_tx(user);
 
     let protected_treasury = test.take_shared<ProtectedTreasury>();
@@ -100,14 +99,14 @@ fun test_init() {
     assert!(protected_treasury.total_supply() == TOTAL_TALUS_SUPPLY_TO_MINT * frost_per_TALUS);
     test::return_shared(protected_treasury);
 
-    let coin_metadata = test.take_immutable<coin::CoinMetadata<TALUS>>();
+    let coin_metadata = test.take_immutable<coin::CoinMetadata<US>>();
 
     assert!(coin_metadata.get_decimals() == 9);
-    assert!(coin_metadata.get_symbol() == b"TALUS".to_ascii_string());
+    assert!(coin_metadata.get_symbol() == b"US".to_ascii_string());
     assert!(coin_metadata.get_name() == b"TALUS Token".to_string());
     assert!(
         coin_metadata.get_description() ==
-            b"The native token for the TALUS Protocol.".to_string(),
+            b"The native token for the Talus Network.".to_string(),
     );
     assert!(
         coin_metadata.get_icon_url() == option::some(
@@ -123,14 +122,14 @@ fun test_init() {
 fun test_burn() {
     let user = @0xa11ce;
     let mut test = test::begin(user);
-    init(TALUS {}, test.ctx());
+    init(US {}, test.ctx());
     test.next_tx(user);
 
     let mut protected_treasury = test.take_shared<ProtectedTreasury>();
     let frost_per_TALUS = 10u64.pow(DECIMALS);
     assert!(protected_treasury.total_supply() == TOTAL_TALUS_SUPPLY_TO_MINT * frost_per_TALUS);
 
-    let mut coin = test.take_from_sender<Coin<TALUS>>();
+    let mut coin = test.take_from_sender<Coin<US>>();
     let new_coin = coin.split(1000 * frost_per_TALUS, test.ctx());
     protected_treasury.burn(new_coin);
     assert!(

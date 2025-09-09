@@ -2,7 +2,7 @@
 module faucet::faucet_tests;
 
 use faucet::faucet::{Self, BiFaucet};
-use sui::coin::{mint_for_testing, burn_for_testing};
+use sui::coin::mint_for_testing;
 use sui::test_scenario::{Self as ts, ctx};
 use sui::test_utils::assert_eq;
 
@@ -106,9 +106,9 @@ fun test_max_mintable() {
         faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
         scenario.next_tx(owner);
         let mut faucet = ts::take_shared<BiFaucet<USDC, ETH>>(&scenario);
-        let mut eth_coin = mint_for_testing<ETH>(max_base, scenario.ctx());
+        let eth_coin = mint_for_testing<ETH>(max_base, scenario.ctx());
 
-        faucet::mint<USDC, ETH>(&mut faucet, &mut eth_coin, scenario.ctx());
+        faucet::mint<USDC, ETH>(&mut faucet, eth_coin, scenario.ctx());
 
         // Verify faucet exists and has correct initial balance
         scenario.next_tx(owner);
@@ -121,7 +121,6 @@ fun test_max_mintable() {
         };
 
         ts::return_shared(faucet);
-        burn_for_testing(eth_coin);
         withdrawal_pct = withdrawal_pct + 10;
     };
 
@@ -150,16 +149,14 @@ fun test_over_mint() {
 
         // mint 1 more than allowed
         let over_mint = max_mint.divide_and_round_up(rate)+1;
-        let mut eth_coin = mint_for_testing<ETH>(over_mint, scenario.ctx());
+        let eth_coin = mint_for_testing<ETH>(over_mint, scenario.ctx());
 
-        faucet::mint<USDC, ETH>(&mut faucet, &mut eth_coin, scenario.ctx());
+        faucet::mint<USDC, ETH>(&mut faucet, eth_coin, scenario.ctx());
 
         // should mint max_mint
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
         assert_eq(balance_target, init-max_mint);
         assert_eq(balance_base, max_mint/rate);
-
-        burn_for_testing(eth_coin);
         ts::return_shared(faucet);
     };
     ts::end(scenario);
@@ -185,14 +182,13 @@ fun test_mint() {
 
         let (max_mint, _) = faucet.max_withdrawal();
 
-        let mut eth_coin = mint_for_testing<ETH>(max_mint/rate, scenario.ctx());
+        let eth_coin = mint_for_testing<ETH>(max_mint/rate, scenario.ctx());
 
-        faucet::mint<USDC, ETH>(&mut faucet, &mut eth_coin, scenario.ctx());
+        faucet::mint<USDC, ETH>(&mut faucet, eth_coin, scenario.ctx());
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
         assert_eq(balance_target, init - max_mint);
         assert_eq(balance_base, max_mint/rate);
 
-        burn_for_testing(eth_coin);
         ts::return_shared(faucet);
     };
 
@@ -216,22 +212,20 @@ fun test_over_refund() {
     ts::next_tx(&mut scenario, user);
     {
         let mut faucet = ts::take_shared<BiFaucet<USDC, ETH>>(&scenario);
-        let mut eth_coin = mint_for_testing<ETH>(mint, scenario.ctx());
-        faucet::mint<USDC, ETH>(&mut faucet, &mut eth_coin, scenario.ctx());
+        let eth_coin = mint_for_testing<ETH>(mint, scenario.ctx());
+        faucet::mint<USDC, ETH>(&mut faucet, eth_coin, scenario.ctx());
 
         let (_, max_refund) = faucet.max_withdrawal();
 
         // technically, can withdrawal max_refund +1
-        let mut usdc_coin = mint_for_testing<USDC>((max_refund+1)*rate, scenario.ctx());
-        faucet::refund<USDC, ETH>(&mut faucet, &mut usdc_coin, scenario.ctx());
+        let usdc_coin = mint_for_testing<USDC>((max_refund+1)*rate, scenario.ctx());
+        faucet::refund<USDC, ETH>(&mut faucet, usdc_coin, scenario.ctx());
 
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
         // Verify balances
         assert_eq(balance_target, init-(mint-max_refund)*rate); // 1000 + 200
         assert_eq(balance_base, mint-max_refund); // 100 - 100
 
-        burn_for_testing(eth_coin);
-        burn_for_testing(usdc_coin);
         ts::return_shared(faucet);
     };
 
@@ -256,20 +250,18 @@ fun test_refund() {
     ts::next_tx(&mut scenario, user);
     {
         let mut faucet = ts::take_shared<BiFaucet<USDC, ETH>>(&scenario);
-        let mut eth_coin = mint_for_testing<ETH>(mint, scenario.ctx());
-        faucet::mint<USDC, ETH>(&mut faucet, &mut eth_coin, scenario.ctx());
+        let eth_coin = mint_for_testing<ETH>(mint, scenario.ctx());
+        faucet::mint<USDC, ETH>(&mut faucet, eth_coin, scenario.ctx());
 
         let (_, max_refund) = faucet.max_withdrawal();
-        let mut usdc_coin = mint_for_testing<USDC>(max_refund*rate, scenario.ctx());
-        faucet::refund<USDC, ETH>(&mut faucet, &mut usdc_coin, scenario.ctx());
+        let usdc_coin = mint_for_testing<USDC>(max_refund*rate, scenario.ctx());
+        faucet::refund<USDC, ETH>(&mut faucet, usdc_coin, scenario.ctx());
 
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
         // Verify balances
         assert_eq(balance_target, init-rate*(mint-max_refund)); // 1000 + 200
         assert_eq(balance_base, mint-max_refund); // 100 - 100
 
-        burn_for_testing(eth_coin);
-        burn_for_testing(usdc_coin);
         ts::return_shared(faucet);
     };
 
