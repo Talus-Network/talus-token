@@ -84,7 +84,7 @@ public entry fun inject<Target, Base>(
 /// * `ctx` - Transaction context
 public entry fun mint<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
-    base_coin: &mut Coin<Base>,
+    mut base_coin: Coin<Base>,
     ctx: &mut TxContext,
 ) {
     let (max_mint, _) = self.max_withdrawal();
@@ -92,6 +92,12 @@ public entry fun mint<Target, Base>(
     let deposit = base_coin.split(collateral, ctx).into_balance();
 
     self.base_balance.join(deposit);
+
+    if (base_coin.value() > 0) {
+        transfer::public_transfer(base_coin, ctx.sender());
+    } else {
+        base_coin.destroy_zero();
+    };
 
     transfer::public_transfer(
         self.target_balance.split(collateral*self.exchange_rate).into_coin(ctx),
@@ -108,7 +114,7 @@ public entry fun mint<Target, Base>(
 /// * `ctx` - Transaction context
 public entry fun refund<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
-    target_coin: &mut Coin<Target>,
+    mut target_coin: Coin<Target>,
     ctx: &mut TxContext,
 ) {
     // return at most 10% of Target
@@ -117,6 +123,12 @@ public entry fun refund<Target, Base>(
     let deposit = target_coin.split(allowed_collateral*self.exchange_rate, ctx).into_balance();
 
     self.target_balance.join(deposit);
+
+    if (target_coin.value() > 0) {
+        transfer::public_transfer(target_coin, ctx.sender());
+    } else {
+        target_coin.destroy_zero();
+    };
 
     transfer::public_transfer(
         self.base_balance.split(allowed_collateral).into_coin(ctx),

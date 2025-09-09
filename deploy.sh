@@ -81,7 +81,7 @@ _getFaucetCoins() {
 }
 
 # Start node if not running
-if ! _checkProcess "sui start"; then
+if ! _checkProcess "$SUI start"; then
     echo "Starting Node"
     start_node="RUST_LOG=\"off,sui_node=error\" $SUI start --with-faucet --force-regenesis"
     _evalBg "${start_node}"
@@ -100,11 +100,9 @@ if ! $SUI client gas | grep -q "0x"; then
     _getFaucetCoins
 fi
 
-_getCoins
-
 echo "Publishing Token contract:"
 TokenContractID=$($SUI client publish --gas-budget 300000000 ./talus --json| jq -r ".objectChanges[] | select(.packageId) | .packageId")
-TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::talus::TALUS")) | .coinObjectId')
+TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 sleep 3
 echo "Token Contract at: \"$TokenContractID\""
 echo "Talus coin at : \"$TalusCoin\""
@@ -121,7 +119,7 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
 
     echo "Initiate faucet"
     FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function initiate \
-        --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI \
+        --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
         --args $TalusCoin --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT \
         --json | jq -r '.objectChanges[] | select(.type == "created") |.objectId')
     echo "faucet at: $FaucetID"
@@ -131,11 +129,11 @@ fi
 
 # echo "test mint"
 # $SUI client call --package $FaucetContractID --module faucet --function mint \
-#         --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI \
-#         --args $FaucetID --args <a gas coin id> \
+#         --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
+#         --args $FaucetID --args <sui coin id> \
 #         --dry-run
 # echo "test refund"
 # $SUI client call --package $FaucetContractID --module faucet --function refund \
-#         --type-args $TokenContractID::talus::TALUS --type-args 0x2::sui::SUI \
-#         --args $FaucetID --args <a talus coin id> \
+#         --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
+#         --args $FaucetID --args <talus coin id> \
 #         --dry-run
