@@ -1,4 +1,4 @@
-module loyalty::stake_pool;
+module loyalty_pool::loyalty_pool;
 
 use sui::balance::{zero, Balance};
 use sui::clock::Clock;
@@ -20,7 +20,7 @@ public struct AdminCap has key, store {
     id: UID,
 }
 
-public struct StakingPool<phantom Base, phantom Loyalty> has key {
+public struct LoyaltyPool<phantom Base, phantom Loyalty> has key {
     id: UID,
     balance: Balance<Base>,
     treasury_cap: TreasuryCap<Loyalty>,
@@ -46,7 +46,7 @@ entry fun initiate<Base, Loyalty>(
     let admin = AdminCap {
         id: object::new(ctx),
     };
-    let mut pool = StakingPool<Base, Loyalty> {
+    let mut pool = LoyaltyPool<Base, Loyalty> {
         id: object::new(ctx),
         balance: zero<Base>(),
         treasury_cap: treasury_cap,
@@ -62,7 +62,7 @@ entry fun initiate<Base, Loyalty>(
 }
 
 entry fun deposit<Base, Loyalty>(
-    pool: &mut StakingPool<Base, Loyalty>,
+    pool: &mut LoyaltyPool<Base, Loyalty>,
     coin: Coin<Base>,
     term: u64,
     clock: &Clock,
@@ -92,7 +92,7 @@ entry fun deposit<Base, Loyalty>(
 }
 
 entry fun withdrawal<Base, Loyalty>(
-    pool: &mut StakingPool<Base, Loyalty>,
+    pool: &mut LoyaltyPool<Base, Loyalty>,
     receipt: Receipt,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -121,7 +121,7 @@ entry fun withdrawal<Base, Loyalty>(
 
 #[allow(unused_mut_parameter)]
 entry fun upsert_lock_term<Base, Loyalty>(
-    pool: &mut StakingPool<Base, Loyalty>,
+    pool: &mut LoyaltyPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u64,
     apy: u8,
@@ -139,7 +139,7 @@ entry fun upsert_lock_term<Base, Loyalty>(
 
 #[allow(unused_mut_parameter)]
 entry fun delete_lock_term<Base, Loyalty>(
-    pool: &mut StakingPool<Base, Loyalty>,
+    pool: &mut LoyaltyPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u64,
 ) {
@@ -150,8 +150,8 @@ entry fun delete_lock_term<Base, Loyalty>(
 }
 
 #[allow(unused_mut_parameter)]
-entry fun add_policy<Policy: drop, Base, Loyalty>(
-    pool: &mut StakingPool<Base, Loyalty>,
+entry fun add_reward_program<Policy: drop, Base, Loyalty>(
+    pool: &mut LoyaltyPool<Base, Loyalty>,
     admin: &mut AdminCap,
     ctx: &mut TxContext,
 ) {
@@ -172,7 +172,7 @@ entry fun add_policy<Policy: drop, Base, Loyalty>(
     transfer::public_transfer(policy_cap, tx_context::sender(ctx));
 }
 
-entry fun migrate<Base, Loyalty>(pool: &mut StakingPool<Base, Loyalty>, admin: &AdminCap) {
+entry fun migrate<Base, Loyalty>(pool: &mut LoyaltyPool<Base, Loyalty>, admin: &AdminCap) {
     assert!(pool.admin == object::id(admin), ENotAdmin);
     assert!(pool.version < VERSION, ENotUpgrade);
     pool.version = VERSION;

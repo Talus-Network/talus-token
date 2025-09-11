@@ -10,6 +10,8 @@ clean-pkg PACKAGE:
 clean:
     @just clean-pkg talus
     @just clean-pkg faucet
+    @just clean-pkg loyalty_pool
+    @just clean-pkg loyalty
 
 # Helper: Build a specific package
 build-pkg PACKAGE:
@@ -19,6 +21,8 @@ build-pkg PACKAGE:
 build:
     @just build-pkg talus
     @just build-pkg faucet
+    @just build-pkg loyalty_pool
+    @just build-pkg loyalty
 
 # Helper: Test a specific package
 test-pkg PACKAGE:
@@ -27,7 +31,10 @@ test-pkg PACKAGE:
 # Test both packages
 test:
     @just test-pkg talus
-    @just test-pkg faucet
+    @just test-pkg faucet    
+    @just test-pkg loyalty_pool
+    @just test-pkg loyalty
+
 
 # Helper: Test with coverage for a specific package
 test-cov-pkg PACKAGE:
@@ -37,6 +44,8 @@ test-cov-pkg PACKAGE:
 test-cov:
     @just test-cov-pkg talus
     @just test-cov-pkg faucet
+    @just test-cov-pkg loyalty
+    @just test-cov-pkg loyalty_pool
 
 # Build and test with report to console
 build-test-report PACKAGE:

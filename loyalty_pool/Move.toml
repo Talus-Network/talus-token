@@ -1,0 +1,11 @@
+[package]
+name = "loyalty_pool"
+edition = "2024.beta" 
+authors = ["Talus Labs <hi@taluslabs.com>"]
+
+[dependencies]
+Talus = {local = "../talus"}
+loyalty = {local = "../loyalty"}
+
+[addresses]
+loyalty_pool = "0x0"

@@ -1,4 +1,4 @@
-module loyalty::reward_program;
+module loyalty_pool::reward_program;
 
 use std::string::String;
 use sui::balance::Balance;
