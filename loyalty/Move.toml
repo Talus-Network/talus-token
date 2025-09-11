@@ -1,5 +1,5 @@
 [package]
-name = "faucet"
+name = "loyalty"
 edition = "2024.beta" 
 authors = ["Talus Labs <hi@taluslabs.com>"]
 
@@ -7,4 +7,5 @@ authors = ["Talus Labs <hi@taluslabs.com>"]
 Talus = {local = "../talus"}
 
 [addresses]
-faucet = "0x0"
+loyalty = "0x0"
+
