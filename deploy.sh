@@ -12,7 +12,7 @@ DEFAULT_INIT=$(_calculate "$TOTAL_AMOUNT/2")
 # Add user input for RPC and alias
 read -p "Enter RPC URL (default: http://127.0.0.1:9000): " RPC_URL
 read -p "Enter environment alias (default: local): " ENV_ALIAS
-read -p "Enter initial amount (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
+read -p "Enter faucet source size (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
 read -p "Enter exhcnage rate Talus/Sui (default: 10): " EXCHANGE_RATE
 read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
 read -p "Deploy and initialize faucet? (y/N): " DEPLOY_FAUCET
@@ -25,11 +25,7 @@ EXCHANGE_RATE=${EXCHANGE_RATE:-10}
 WITHDRAWAL_PCT=${WITHDRAWAL_PCT:-50}
 DEPLOY_FAUCET=${DEPLOY_FAUCET:-"n"}
 
-if [ -z "$INIT_AMOUNT" ]; then
-    SPLIT_AMOUNT=$DEFAULT_INIT
-else
-    SPLIT_AMOUNT=$(_calculate "$TOTAL_AMOUNT-$INIT_AMOUNT")
-fi
+SPLIT_AMOUNT=0
 
 # Setup client if needed
 if ! $SUI client active-env | grep -q "$ENV_ALIAS"; then
@@ -107,11 +103,19 @@ sleep 3
 echo "Token Contract at: \"$TokenContractID\""
 echo "Talus coin at : \"$TalusCoin\""
 
-echo "Split coin"
-splitres=$($SUI client split-coin --coin-id $TalusCoin --amounts $SPLIT_AMOUNT --gas-budget 10000000)
 
 # Only deploy faucet if requested
 if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
+    
+    if [ -z "$INIT_AMOUNT" ]; then
+        SPLIT_AMOUNT=$DEFAULT_INIT
+    else
+        SPLIT_AMOUNT=$(_calculate "$TOTAL_AMOUNT-$INIT_AMOUNT")
+    fi
+
+    echo "Split coin"
+    $SUI client split-coin --coin-id $TalusCoin --amounts $SPLIT_AMOUNT --gas-budget 10000000
+    
     echo "Publishing Faucet Contract:"
     FaucetContractID=$($SUI client publish --gas-budget 30000000 ./faucet --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
     sleep 3
@@ -126,6 +130,26 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
 else
     echo "Skipping faucet deployment"
 fi
+
+
+echo "Split coin for reward program"
+TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
+RESERVE_SIZE=$(_calculate "($TOTAL_AMOUNT*85/100)-$SPLIT_AMOUNT")
+$SUI client split-coin --coin-id $TalusCoin --amounts $RESERVE_SIZE --gas-budget 10000000
+
+
+echo "Deploy Reward Program and Deposit Pool"
+LoyaltyProgramContractID=$($SUI client publish --gas-budget 30000000 ./deposit_pool --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
+sleep 3
+echo "Loyalty Program Contract at: \"$LoyaltyProgramContractID\""
+
+echo "Deploy RLoyalty Token Contract"
+LoyaltyTokenContractID=$($SUI client publish --gas-budget 30000000 ./loyalty --json | jq -r '.objectChanges[] | select(.packageId) | .packageId')
+sleep 3
+echo "Loyalty Token Contract at: \"$LoyaltyProgramContractID\""
+
+echo "Init Reward Program and Deposit Pool"
+# TODO
 
 # echo "test mint"
 # $SUI client call --package $FaucetContractID --module faucet --function mint \
