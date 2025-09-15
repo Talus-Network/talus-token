@@ -131,7 +131,7 @@ entry fun withdrawal<Base, Loyalty>(
     
     id.delete();
 
-    // return rate
+    // return base
     transfer::public_transfer(pool.balance.split(amount).into_coin(ctx), ctx.sender());
 }
 
@@ -195,5 +195,5 @@ entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &
 
 fun calculate_return(amount: u64, term: u64, apy: u8): u64 {
     let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(100);
-    (term as u128 * yearly_return).divide_and_round_up(356).try_as_u64().extract()
+    (term as u128 * yearly_return).divide_and_round_up(365).try_as_u64().extract()
 }
