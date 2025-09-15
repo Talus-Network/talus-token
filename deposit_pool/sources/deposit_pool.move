@@ -1,9 +1,10 @@
-module loyalty_pool::loyalty_pool;
+module deposit_pool::deposit_pool;
 
 use sui::balance::{zero, Balance};
 use sui::clock::Clock;
 use sui::coin::{TreasuryCap, Coin};
 use sui::table::{Self, Table};
+use sui::bag::{Self,Bag};
 use sui::token;
 
 const ENotAdmin: u64 = 0;
@@ -12,21 +13,28 @@ const ENotUpgrade: u64 = 1;
 
 const EWrongVersion: u64 = 2;
 
-const EWrongPool: u64 = 2;
+const EWrongPool: u64 = 3;
+
+const ENotSupportEarlyWithdrawal:u64 = 4;
 
 const VERSION: u64 = 1;
+
+const MS_PER_DAY:u64 = 86400000;
+
+const KEY_SUPPORT_EARLY_WITHDRAWAL:u8 = 1;
 
 public struct AdminCap has key, store {
     id: UID,
 }
 
-public struct LoyaltyPool<phantom Base, phantom Loyalty> has key {
+public struct DepositPool<phantom Base, phantom Loyalty> has key {
     id: UID,
     balance: Balance<Base>,
     treasury_cap: TreasuryCap<Loyalty>,
-    table: Table<u64, u8>,
+    return_rates: Table<u64, u8>,
     admin: ID,
     version: u64,
+    options: Bag,
 }
 
 public struct Receipt has key {
@@ -41,39 +49,44 @@ public struct Receipt has key {
 entry fun initiate<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
     base_apy: u8,
+    ealry_withdrawal:bool,
     ctx: &mut TxContext,
 ) {
     let admin = AdminCap {
         id: object::new(ctx),
     };
-    let mut pool = LoyaltyPool<Base, Loyalty> {
+    let mut pool = DepositPool<Base, Loyalty> {
         id: object::new(ctx),
         balance: zero<Base>(),
         treasury_cap: treasury_cap,
         admin: object::id(&admin),
-        table: table::new(ctx),
+        return_rates: table::new(ctx),
         version: VERSION,
+        options: bag::new(ctx)
     };
 
-    pool.table.add(0, base_apy);
+    pool.options.add(KEY_SUPPORT_EARLY_WITHDRAWAL,ealry_withdrawal);
+
+    pool.return_rates.add(0, base_apy);
     transfer::share_object(pool);
 
     transfer::transfer(admin, ctx.sender());
 }
 
 entry fun deposit<Base, Loyalty>(
-    pool: &mut LoyaltyPool<Base, Loyalty>,
+    pool: &mut DepositPool<Base, Loyalty>,
     coin: Coin<Base>,
     term: u64,
     clock: &Clock,
+    recipient: address,
     ctx: &mut TxContext,
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
 
-    let (lock_term, apy) = if (pool.table.contains(term)) {
-        (term, pool.table.borrow(term))
+    let (lock_term, apy) = if (pool.return_rates.contains(term)) {
+        (term, pool.return_rates.borrow(term))
     } else {
-        (0, pool.table.borrow(0))
+        (0, pool.return_rates.borrow(0))
     };
 
     transfer::transfer(
@@ -82,17 +95,17 @@ entry fun deposit<Base, Loyalty>(
             pool_id: object::id(pool),
             amount: coin.value(),
             issue: clock.timestamp_ms(),
-            term: clock.timestamp_ms()+lock_term,
+            term: clock.timestamp_ms()+lock_term*MS_PER_DAY,
             apy: *apy,
         },
-        ctx.sender(),
+        recipient,
     );
 
     pool.balance.join(coin.into_balance());
 }
 
 entry fun withdrawal<Base, Loyalty>(
-    pool: &mut LoyaltyPool<Base, Loyalty>,
+    pool: &mut DepositPool<Base, Loyalty>,
     receipt: Receipt,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -102,17 +115,20 @@ entry fun withdrawal<Base, Loyalty>(
 
     // consume receipt
     let Receipt { id, .., amount, issue, term, apy } = receipt;
-    if (clock.timestamp_ms()> term) {
+    if (clock.timestamp_ms()>= term) {
         let token = token::mint<Loyalty>(
             &mut pool.treasury_cap,
-            calculate_return(amount, clock.timestamp_ms()-issue, apy),
+            calculate_return(amount, (clock.timestamp_ms()-issue).divide_and_round_up(MS_PER_DAY), apy),
             ctx,
         );
         let req = token::transfer(token, ctx.sender(), ctx);
 
         token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
+    }
+    else {
+        assert!(pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)==true,ENotSupportEarlyWithdrawal)
     };
-
+    
     id.delete();
 
     // return rate
@@ -121,7 +137,7 @@ entry fun withdrawal<Base, Loyalty>(
 
 #[allow(unused_mut_parameter)]
 entry fun upsert_lock_term<Base, Loyalty>(
-    pool: &mut LoyaltyPool<Base, Loyalty>,
+    pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u64,
     apy: u8,
@@ -129,29 +145,28 @@ entry fun upsert_lock_term<Base, Loyalty>(
     assert!(pool.admin == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
     // lock_term in ms
-    let lock_term = days*86400000;
-    if (pool.table.contains(lock_term)) {
-        pool.table.remove(lock_term);
+    if (pool.return_rates.contains(days)) {
+        pool.return_rates.remove(days);
     };
 
-    pool.table.add(lock_term, apy)
+    pool.return_rates.add(days, apy)
 }
 
 #[allow(unused_mut_parameter)]
 entry fun delete_lock_term<Base, Loyalty>(
-    pool: &mut LoyaltyPool<Base, Loyalty>,
+    pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u64,
 ) {
     assert!(pool.admin == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
     // lock_term in ms
-    pool.table.remove(days*86400000);
+    pool.return_rates.remove(days);
 }
 
 #[allow(unused_mut_parameter)]
 entry fun add_reward_program<Policy: drop, Base, Loyalty>(
-    pool: &mut LoyaltyPool<Base, Loyalty>,
+    pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     ctx: &mut TxContext,
 ) {
@@ -172,7 +187,7 @@ entry fun add_reward_program<Policy: drop, Base, Loyalty>(
     transfer::public_transfer(policy_cap, tx_context::sender(ctx));
 }
 
-entry fun migrate<Base, Loyalty>(pool: &mut LoyaltyPool<Base, Loyalty>, admin: &AdminCap) {
+entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &AdminCap) {
     assert!(pool.admin == object::id(admin), ENotAdmin);
     assert!(pool.version < VERSION, ENotUpgrade);
     pool.version = VERSION;
@@ -180,5 +195,5 @@ entry fun migrate<Base, Loyalty>(pool: &mut LoyaltyPool<Base, Loyalty>, admin: &
 
 fun calculate_return(amount: u64, term: u64, apy: u8): u64 {
     let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(100);
-    (term as u128 * yearly_return).divide_and_round_up(31536000000).try_as_u64().extract()
+    (term as u128 * yearly_return).divide_and_round_up(356).try_as_u64().extract()
 }

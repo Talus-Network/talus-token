@@ -1,5 +1,5 @@
 [package]
-name = "loyalty_pool"
+name = "deposit_pool"
 edition = "2024.beta" 
 authors = ["Talus Labs <hi@taluslabs.com>"]
 
@@ -8,4 +8,4 @@ Talus = {local = "../talus"}
 loyalty = {local = "../loyalty"}
 
 [addresses]
-loyalty_pool = "0x0"
+deposit_pool = "0x0"
