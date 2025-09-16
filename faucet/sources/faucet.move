@@ -45,7 +45,7 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
 /// * `exchange_rate` - Number of coin Target per coin Base
 /// * `withdrawal_pct` - Maximum withdrawal percentage per transaction (must be < 100)
 /// * `ctx` - Transaction context
-public entry fun initiate<Target, Base>(
+entry fun initiate<Target, Base>(
     initial_token: Coin<Target>,
     exchange_rate: u64,
     withdrawal_pct: u64,
@@ -68,7 +68,7 @@ public entry fun initiate<Target, Base>(
 /// # Parameters
 /// * `faucet` - Faucet to inject coins into
 /// * `target_coin` - Coin Target to add to reserves
-public entry fun inject<Target, Base>(
+public fun inject<Target, Base>(
     faucet: &mut BiFaucet<Target, Base>,
     target_coin: Coin<Target>,
 ) {
@@ -82,7 +82,8 @@ public entry fun inject<Target, Base>(
 /// * `self` - Faucet to mint from
 /// * `base_coin` - Coin Base to exchange
 /// * `ctx` - Transaction context
-public entry fun mint<Target, Base>(
+#[allow(lint(self_transfer))]
+public fun mint<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
     mut base_coin: Coin<Base>,
     ctx: &mut TxContext,
@@ -102,7 +103,7 @@ public entry fun mint<Target, Base>(
     transfer::public_transfer(
         self.target_balance.split(collateral*self.exchange_rate).into_coin(ctx),
         ctx.sender(),
-    )
+    );
 }
 
 /// Refunds coin Base in exchange for returning coin Target at the fixed exchange rate.
@@ -112,7 +113,8 @@ public entry fun mint<Target, Base>(
 /// * `self` - Faucet to refund from
 /// * `target_coin` - Coin Target to return
 /// * `ctx` - Transaction context
-public entry fun refund<Target, Base>(
+#[allow(lint(self_transfer))]
+public fun refund<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
     mut target_coin: Coin<Target>,
     ctx: &mut TxContext,

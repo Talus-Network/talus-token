@@ -4,9 +4,12 @@ use sui::balance::{zero, Balance};
 use sui::clock::Clock;
 use sui::coin::{TreasuryCap, Coin};
 use sui::table::{Self, Table};
+use sui::dynamic_field as df;
 use sui::bag::{Self,Bag};
 use sui::token;
+use sui::object::id;
 
+// ===================== Error Codes================
 const ENotAdmin: u64 = 0;
 
 const ENotUpgrade: u64 = 1;
@@ -17,11 +20,16 @@ const EWrongPool: u64 = 3;
 
 const ENotSupportEarlyWithdrawal:u64 = 4;
 
+const EPendingWithdrawal:u64 = 5;
+
+// ====================== Const =================
 const VERSION: u64 = 1;
 
 const MS_PER_DAY:u64 = 86400000;
 
 const KEY_SUPPORT_EARLY_WITHDRAWAL:u8 = 1;
+
+const KEY_WITNDRWAL_PENDING: u8 = 2;
 
 public struct AdminCap has key, store {
     id: UID,
@@ -50,6 +58,7 @@ entry fun initiate<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
     base_apy: u8,
     ealry_withdrawal:bool,
+    witndrawal_pending: u64,
     ctx: &mut TxContext,
 ) {
     let admin = AdminCap {
@@ -67,13 +76,17 @@ entry fun initiate<Base, Loyalty>(
 
     pool.options.add(KEY_SUPPORT_EARLY_WITHDRAWAL,ealry_withdrawal);
 
+    if(witndrawal_pending >0) {
+        pool.options.add(KEY_WITNDRWAL_PENDING, witndrawal_pending);
+    };
+
     pool.return_rates.add(0, base_apy);
     transfer::share_object(pool);
 
     transfer::transfer(admin, ctx.sender());
 }
 
-entry fun deposit<Base, Loyalty>(
+public fun deposit<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     coin: Coin<Base>,
     term: u64,
@@ -113,21 +126,36 @@ entry fun withdrawal<Base, Loyalty>(
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
 
+    // Check eligible for execute withdrawal
+    if(pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
+        assert!(clock.timestamp_ms() > receipt.term, ENotSupportEarlyWithdrawal);
+    };
+
+    if(pool.options.contains(KEY_WITNDRWAL_PENDING)){
+        if(df::exists_(&pool.id, id(&receipt))) {
+            // ensure pending is passed.
+            assert!(*df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(),EPendingWithdrawal);
+        }else{
+            // add pending and finish the call.
+            df::add(&mut pool.id, id(&receipt), clock.timestamp_ms() +*pool.options.borrow(KEY_WITNDRWAL_PENDING)*MS_PER_DAY);
+            transfer::transfer(receipt, ctx.sender());
+            return
+        }
+    };
+
     // consume receipt
     let Receipt { id, .., amount, issue, term, apy } = receipt;
-    if (clock.timestamp_ms()>= term) {
+    let token_amount = calculate_token_amount(pool, clock, id.to_inner(), amount, term, issue, apy);
+    if(token_amount>0){
         let token = token::mint<Loyalty>(
             &mut pool.treasury_cap,
-            calculate_return(amount, (clock.timestamp_ms()-issue).divide_and_round_up(MS_PER_DAY), apy),
+            token_amount,
             ctx,
         );
         let req = token::transfer(token, ctx.sender(), ctx);
 
         token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
-    }
-    else {
-        assert!(pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)==true,ENotSupportEarlyWithdrawal)
-    };
+    }; 
     
     id.delete();
 
@@ -136,7 +164,7 @@ entry fun withdrawal<Base, Loyalty>(
 }
 
 #[allow(unused_mut_parameter)]
-entry fun upsert_lock_term<Base, Loyalty>(
+public fun upsert_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u64,
@@ -152,8 +180,19 @@ entry fun upsert_lock_term<Base, Loyalty>(
     pool.return_rates.add(days, apy)
 }
 
+public fun cancel_pending_withdrawal<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    receipt: &mut Receipt
+) {
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(receipt.pool_id == object::id(pool), EWrongPool);
+    // lock_term in ms
+    df::remove<_,u64>(&mut pool.id, id(receipt));
+}
+
+
 #[allow(unused_mut_parameter)]
-entry fun delete_lock_term<Base, Loyalty>(
+public fun delete_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u64,
@@ -193,7 +232,21 @@ entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &
     pool.version = VERSION;
 }
 
-fun calculate_return(amount: u64, term: u64, apy: u8): u64 {
+
+
+fun calculate_token_amount<X,Y>(pool: &mut DepositPool<X,Y>, clock:&Clock, receipt_id:ID, amount: u64, lock_term:u64, issue: u64, apy:u8):u64 {
+    // no additional token anyway
+    if (clock.timestamp_ms()< lock_term) {
+        return 0
+    };
+    
+
+    let eligible_term:u64 = if(pool.options.contains(KEY_WITNDRWAL_PENDING)) {
+        df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITNDRWAL_PENDING)*MS_PER_DAY-issue
+    }else {
+        clock.timestamp_ms()-issue
+    }.divide_and_round_up(MS_PER_DAY);
+
     let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(100);
-    (term as u128 * yearly_return).divide_and_round_up(365).try_as_u64().extract()
+    (eligible_term as u128 * yearly_return).divide_and_round_up(365).try_as_u64().extract()
 }
