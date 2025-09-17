@@ -11,19 +11,19 @@ use sui::object::id;
 use sui::token::{Token, spend, add_approval, confirm_request_mut, TokenPolicy};
 
 /// Error code for insufficient pool balance when claiming rewards
-const EPoolInsufficient: u64 = 0;
+const E_POOL_INSUFFICIENT: u64 = 0;
 
 /// Event emitted when the reward pool is refreshed with new rewards
 public struct ProgramFreshEvent has copy, drop {
-    pool: ID,
+    pool_id: ID,
     amount: u64,
 }
 
 /// Event emitted when a user redeems a reward
 public struct RedeemEvent has copy, drop {
-    name: String,
+    token_name: String,
     amount: u64,
-    user: address,
+    user_address: address,
 }
 
 /// Marker struct for reward program approval
@@ -35,7 +35,7 @@ public struct RewardPool<phantom Loyalty, phantom Reward> has key, store {
     /// Balance of reward tokens available for claiming
     balance: Balance<Reward>,
     /// Number of loyalty tokens required per reward token
-    rate: u32,
+    exchange_rate: u32,  // Changed from rate to exchange_rate
 }
 
 /// Creates a new reward pool with an initial balance and rate
@@ -43,7 +43,7 @@ entry fun new_reward_pool<Loyalty, Reward>(coin: Coin<Reward>, rate: u32, ctx: &
     transfer::share_object(RewardPool<Loyalty, Reward> {
         id: object::new(ctx),
         balance: coin.into_balance(),
-        rate: rate,
+        exchange_rate: rate,
     });
 }
 
@@ -53,7 +53,7 @@ entry fun reward_fresh<Loyalty, Reward>(
     coin: Coin<Reward>,
 ) {
     event::emit(ProgramFreshEvent {
-        pool: id(pool),
+        pool_id: id(pool),
         amount: coin.value(),
     });
 
@@ -68,19 +68,19 @@ entry fun claim<Loyalty, Reward>(
     policy: &mut TokenPolicy<Loyalty>,
     ctx: &mut TxContext,
 ) {
-    let claim = token.value().divide_and_round_up(pool.rate as u64);
+    let claim_amount = token.value().divide_and_round_up(pool.exchange_rate as u64);  // Changed from claim
 
-    assert!(claim <= pool.balance.value(), EPoolInsufficient);
+    assert!(claim_amount <= pool.balance.value(), E_POOL_INSUFFICIENT);
 
     let mut req = spend(token, ctx);
     add_approval(RewardProgram {}, &mut req, ctx);
 
-    let (name, amount, user, _) = confirm_request_mut(policy, req, ctx);
+    let (token_name, amount, user_address, _) = confirm_request_mut(policy, req, ctx);
 
-    transfer::public_transfer(pool.balance.split(claim).into_coin(ctx), ctx.sender());
+    transfer::public_transfer(pool.balance.split(claim_amount).into_coin(ctx), ctx.sender());
     event::emit(RedeemEvent {
-        name,
+        token_name,
         amount,
-        user,
+        user_address,
     });
 }

@@ -4,8 +4,8 @@
 # Configuration Variables
 ###########################################
 SUI="sui"
-TOTAL_AMOUNT="10^19"
-SPLIT_AMOUNT=0
+TOTAL_SUPPLY="10^19"  # Changed from TOTAL_AMOUNT
+INITIAL_SPLIT_AMOUNT=0  # Changed from SPLIT_AMOUNT
 BASE_APY=2
 
 ###########################################
@@ -13,7 +13,7 @@ BASE_APY=2
 ###########################################
 
 # Calculate large numbers using bc
-_calculate() {
+_calculate_amount() {  # Changed from _calculate
     echo "scale=0; $1" | bc
 }
 
@@ -63,13 +63,13 @@ _getFaucetCoins() {
 ###########################################
 
 # Calculate default initialization amount
-DEFAULT_INIT=$(_calculate "$TOTAL_AMOUNT/2")
+DEFAULT_INIT=$(_calculate_amount "$TOTAL_SUPPLY/2")
 
 # Collect user inputs with descriptive prompts
 read -p "Enter RPC URL (default: http://127.0.0.1:9000): " RPC_URL
 read -p "Enter environment alias (default: local): " ENV_ALIAS
 read -p "Enter faucet source size (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
-read -p "Enter exhcnage rate Talus/Sui (default: 10): " EXCHANGE_RATE
+read -p "Enter exchange rate Talus/Sui (default: 10): " EXCHANGE_RATE
 read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
 read -p "Deploy and initialize faucet? (y/N): " DEPLOY_FAUCET
 
@@ -118,11 +118,11 @@ fi
 
 # Deploy main token contract
 echo "Publishing Token contract:"
-TokenContractID=$($SUI client publish ./talus --json| jq -r ".objectChanges[] | select(.packageId) | .packageId")
-TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
+TOKEN_CONTRACT_ID=$($SUI client publish ./talus --json| jq -r ".objectChanges[] | select(.packageId) | .packageId")
+TALUS_COIN=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 sleep 3
-echo "Token Contract at: \"$TokenContractID\""
-echo "Talus coin at : \"$TalusCoin\""
+echo "Token Contract at: \"$TOKEN_CONTRACT_ID\""
+echo "Talus coin at : \"$TALUS_COIN\""
 
 ###########################################
 # Faucet Deployment (Optional)
@@ -133,11 +133,11 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
     if [ -z "$INIT_AMOUNT" ]; then
         SPLIT_AMOUNT=$DEFAULT_INIT
     else
-        SPLIT_AMOUNT=$(_calculate "$TOTAL_AMOUNT-$INIT_AMOUNT")
+        SPLIT_AMOUNT=$(_calculate_amount "$TOTAL_SUPPLY-$INIT_AMOUNT")
     fi
 
     echo "Split coin"
-    _spliter=$($SUI client split-coin --coin-id $TalusCoin --amounts $SPLIT_AMOUNT)
+    _spliter=$($SUI client split-coin --coin-id $TALUS_COIN --amounts $SPLIT_AMOUNT)
     
     # Deploy and initialize faucet
     echo "Publishing Faucet Contract:"
@@ -147,8 +147,8 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
 
     echo "Initiate faucet"
     FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function initiate \
-        --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
-        --args $TalusCoin --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT \
+        --type-args $TOKEN_CONTRACT_ID::us::US --type-args 0x2::sui::SUI \
+        --args $TALUS_COIN --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT \
         --json | jq -r '.objectChanges[] | select(.type == "created") |.objectId')
     echo "faucet at: $FaucetID"
 else
@@ -162,9 +162,9 @@ fi
 # Prepare coins for reward program
 sleep 3
 echo "Split coin for reward program"
-TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
-RESERVE_SIZE=$(_calculate "($TOTAL_AMOUNT*85/100)-$SPLIT_AMOUNT")
-_spliter=$($SUI client split-coin --coin-id $TalusCoin --amounts $RESERVE_SIZE)
+TALUS_COIN=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
+RESERVE_SIZE=$(_calculate_amount "($TOTAL_SUPPLY*85/100)-$SPLIT_AMOUNT")
+_spliter=$($SUI client split-coin --coin-id $TALUS_COIN --amounts $RESERVE_SIZE)
 
 # Deploy Loyalty Token Contract
 echo "Deploy Loyalty Token Contract"
@@ -184,7 +184,7 @@ echo "Loyalty Token Cap at: \"$LoyaltyTreasuryCap\""
 # Initialize Reward Program
 echo "Init Reward Program and Deposit Pool"
 script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function initiate \
-        --type-args $TokenContractID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+        --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $LoyaltyTreasuryCap --args $BASE_APY --args false --args 0 \
         --json)
 ADMIN_CAP=$(echo $script| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("AdminCap"))) | .objectId')
@@ -197,8 +197,8 @@ sleep 3
 echo "initiate reward program"
 REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_program --function new_reward_pool \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
-        --type-args $TokenContractID::us::US  \
-        --args $TalusCoin --args 1 --json | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
+        --type-args $TOKEN_CONTRACT_ID::us::US  \
+        --args $TALUS_COIN --args 1 --json | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
 
 sleep 3
 echo "reward pool at $REWARD_POOL"
@@ -207,7 +207,7 @@ echo "register reward pool"
 # Register Reward Program
 PolicyID=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function add_reward_program \
         --type-args $LoyaltyProgramContractID::reward_program::RewardProgram \
-        --type-args $TokenContractID::us::US \
+        --type-args $TOKEN_CONTRACT_ID::us::US \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $DEPOSIT_POOL --args $ADMIN_CAP \
         --gas-budget 30000000 --json| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TokenPolicy"))) | .objectId' )

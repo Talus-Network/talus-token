@@ -35,7 +35,7 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
     target_balance: Balance<Target>,
     base_balance: Balance<Base>,
     exchange_rate: u64,
-    withdrawal_pct: u64,
+    max_withdrawal_pct: u64, // Changed from withdrawal_pct
 }
 
 /// Creates a new shared faucet with initial liquidity of coin Target.
@@ -46,18 +46,18 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
 /// * `withdrawal_pct` - Maximum withdrawal percentage per transaction (must be < 100)
 /// * `ctx` - Transaction context
 entry fun initiate<Target, Base>(
-    initial_token: Coin<Target>,
+    initial_tokens: Coin<Target>, // Changed from initial_token
     exchange_rate: u64,
-    withdrawal_pct: u64,
+    max_withdrawal_pct: u64, // Changed from withdrawal_pct
     ctx: &mut TxContext,
 ) {
-    assert!(withdrawal_pct < 100, 1);
+    assert!(max_withdrawal_pct < 100, 1);
     let faucet = BiFaucet<Target, Base> {
         id: new(ctx),
-        target_balance: initial_token.into_balance(),
+        target_balance: initial_tokens.into_balance(),
         base_balance: zero(),
-        exchange_rate: exchange_rate,
-        withdrawal_pct: withdrawal_pct,
+        exchange_rate,
+        max_withdrawal_pct,
     };
     // Make the faucet shared so anyone can call donate/swap.
     transfer::share_object(faucet);
@@ -68,10 +68,7 @@ entry fun initiate<Target, Base>(
 /// # Parameters
 /// * `faucet` - Faucet to inject coins into
 /// * `target_coin` - Coin Target to add to reserves
-public fun inject<Target, Base>(
-    faucet: &mut BiFaucet<Target, Base>,
-    target_coin: Coin<Target>,
-) {
+public fun inject<Target, Base>(faucet: &mut BiFaucet<Target, Base>, target_coin: Coin<Target>) {
     faucet.target_balance.join(target_coin.into_balance());
 }
 
@@ -144,8 +141,8 @@ public fun refund<Target, Base>(
 /// * `(u64, u64)` - (max coin Target withdrawal, max coin Base withdrawal)
 public(package) fun max_withdrawal<Target, Base>(self: &BiFaucet<Target, Base>): (u64, u64) {
     (
-        (self.target_balance.value() / 100) * self.withdrawal_pct,
-        (self.base_balance.value() / 100) * self.withdrawal_pct,
+        (self.target_balance.value() / 100) * self.max_withdrawal_pct,
+        (self.base_balance.value() / 100) * self.max_withdrawal_pct,
     )
 }
 
@@ -161,6 +158,6 @@ public fun get_balance_for_testing<Target, Base>(
         self.target_balance.value(),
         self.base_balance.value(),
         self.exchange_rate,
-        self.withdrawal_pct,
+        self.max_withdrawal_pct,
     )
 }
