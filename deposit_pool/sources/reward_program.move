@@ -1,3 +1,6 @@
+/// The reward program module define basic reward pools and allows users to claim rewards
+/// by spending loyalty tokens. Pools can be refreshed with more rewards, and events
+/// are emitted for transparency.
 module deposit_pool::reward_program;
 
 use std::string::String;
@@ -7,27 +10,35 @@ use sui::event;
 use sui::object::id;
 use sui::token::{Token, spend, add_approval, confirm_request_mut, TokenPolicy};
 
+/// Error code for insufficient pool balance when claiming rewards
 const EPoolInsufficient: u64 = 0;
 
+/// Event emitted when the reward pool is refreshed with new rewards
 public struct ProgramFreshEvent has copy, drop {
     pool: ID,
     amount: u64,
 }
 
+/// Event emitted when a user redeems a reward
 public struct RedeemEvent has copy, drop {
     name: String,
     amount: u64,
     user: address,
 }
 
+/// Marker struct for reward program approval
 public struct RewardProgram has drop {}
 
+/// Reward pool holding reward tokens and the exchange rate
 public struct RewardPool<phantom Loyalty, phantom Reward> has key, store {
     id: UID,
+    /// Balance of reward tokens available for claiming
     balance: Balance<Reward>,
+    /// Number of loyalty tokens required per reward token
     rate: u32,
 }
 
+/// Creates a new reward pool with an initial balance and rate
 entry fun new_reward_pool<Loyalty, Reward>(coin: Coin<Reward>, rate: u32, ctx: &mut TxContext) {
     transfer::share_object(RewardPool<Loyalty, Reward> {
         id: object::new(ctx),
@@ -36,6 +47,7 @@ entry fun new_reward_pool<Loyalty, Reward>(coin: Coin<Reward>, rate: u32, ctx: &
     });
 }
 
+/// Adds more rewards to the pool and emits an event
 entry fun reward_fresh<Loyalty, Reward>(
     pool: &mut RewardPool<Loyalty, Reward>,
     coin: Coin<Reward>,
@@ -48,8 +60,8 @@ entry fun reward_fresh<Loyalty, Reward>(
     pool.balance.join(coin.into_balance());
 }
 
-/// Buy a gift for 10 tokens. The `Gift` is received, and the `Token` is
-/// spent (stored in the `ActionRequest`'s `burned_balance` field).
+/// Claims rewards by spending loyalty tokens. Transfers reward tokens to the user
+/// and emits a redeem event.
 entry fun claim<Loyalty, Reward>(
     pool: &mut RewardPool<Loyalty, Reward>,
     token: Token<Loyalty>,

@@ -1,3 +1,5 @@
+/// The deposit pool module allows users to deposit base tokens and earn loyalty tokens as rewards.
+/// Users can lock their tokens for different time periods with varying APY rates.
 module deposit_pool::deposit_pool;
 
 use sui::balance::{zero, Balance};
@@ -10,50 +12,66 @@ use sui::token;
 use sui::object::id;
 
 // ===================== Error Codes================
+/// Error when caller is not the admin
 const ENotAdmin: u64 = 0;
-
+/// Error when trying to upgrade from current version
 const ENotUpgrade: u64 = 1;
-
+/// Error when version mismatch is detected
 const EWrongVersion: u64 = 2;
-
+/// Error when receipt is from different pool
 const EWrongPool: u64 = 3;
-
+/// Error when early withdrawal is not supported
 const ENotSupportEarlyWithdrawal:u64 = 4;
-
+/// Error when withdrawal is still in pending state
 const EPendingWithdrawal:u64 = 5;
 
 // ====================== Const =================
+/// Current version of the contract
 const VERSION: u64 = 1;
-
+/// Milliseconds in one day
 const MS_PER_DAY:u64 = 86400000;
-
+/// Option key for early withdrawal support
 const KEY_SUPPORT_EARLY_WITHDRAWAL:u8 = 1;
-
+/// Option key for withdrawal pending period
 const KEY_WITNDRWAL_PENDING: u8 = 2;
 
 public struct AdminCap has key, store {
     id: UID,
 }
 
+/// Main pool object that holds deposits and manages loyalty token distribution
 public struct DepositPool<phantom Base, phantom Loyalty> has key {
     id: UID,
+    /// Balance of base tokens in the pool
     balance: Balance<Base>,
+    /// Treasury capability for minting loyalty tokens
     treasury_cap: TreasuryCap<Loyalty>,
+    /// Mapping of lock periods to APY rates
     return_rates: Table<u64, u8>,
+    /// ID of the admin capability
     admin: ID,
+    /// Contract version
     version: u64,
+    /// Additional pool options
     options: Bag,
 }
 
+/// Receipt given to users when they deposit tokens
 public struct Receipt has key {
     id: UID,
+    /// ID of the pool where deposit was made
     pool_id: ID,
+    /// Amount of base tokens deposited
     amount: u64,
+    /// Timestamp when deposit was made
     issue: u64,
+    /// Timestamp when lock period ends
     term: u64,
+    /// APY rate for this deposit
     apy: u8,
 }
 
+/// Initializes a new deposit pool with base APY and configuration
 entry fun initiate<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
     base_apy: u8,
@@ -86,6 +104,7 @@ entry fun initiate<Base, Loyalty>(
     transfer::transfer(admin, ctx.sender());
 }
 
+/// Deposits base tokens into the pool and receives a receipt
 public fun deposit<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     coin: Coin<Base>,
@@ -117,6 +136,7 @@ public fun deposit<Base, Loyalty>(
     pool.balance.join(coin.into_balance());
 }
 
+/// Withdraws base tokens and claims loyalty tokens if eligible
 entry fun withdrawal<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     receipt: Receipt,
@@ -163,6 +183,7 @@ entry fun withdrawal<Base, Loyalty>(
     transfer::public_transfer(pool.balance.split(amount).into_coin(ctx), ctx.sender());
 }
 
+/// Updates or adds a new lock term period with corresponding APY
 #[allow(unused_mut_parameter)]
 public fun upsert_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
@@ -180,6 +201,7 @@ public fun upsert_lock_term<Base, Loyalty>(
     pool.return_rates.add(days, apy)
 }
 
+/// Cancels a pending withdrawal request
 public fun cancel_pending_withdrawal<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     receipt: &mut Receipt
@@ -203,8 +225,9 @@ public fun delete_lock_term<Base, Loyalty>(
     pool.return_rates.remove(days);
 }
 
-#[allow(unused_mut_parameter)]
-entry fun add_reward_program<Policy: drop, Base, Loyalty>(
+/// Adds a new reward program policy for loyalty tokens
+#[allow(unused_mut_parameter,lint(self_transfer))]
+public fun add_reward_program<Policy: drop, Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     ctx: &mut TxContext,
@@ -226,6 +249,7 @@ entry fun add_reward_program<Policy: drop, Base, Loyalty>(
     transfer::public_transfer(policy_cap, tx_context::sender(ctx));
 }
 
+/// Upgrades the pool to a new version
 entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &AdminCap) {
     assert!(pool.admin == object::id(admin), ENotAdmin);
     assert!(pool.version < VERSION, ENotUpgrade);
@@ -234,12 +258,20 @@ entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &
 
 
 
-fun calculate_token_amount<X,Y>(pool: &mut DepositPool<X,Y>, clock:&Clock, receipt_id:ID, amount: u64, lock_term:u64, issue: u64, apy:u8):u64 {
+/// Calculates the amount of loyalty tokens to be minted based on deposit terms
+fun calculate_token_amount<X,Y>(
+    pool: &mut DepositPool<X,Y>, 
+    clock: &Clock, 
+    receipt_id: ID, 
+    amount: u64, 
+    lock_term: u64, 
+    issue: u64, 
+    apy: u8
+): u64 {
     // no additional token anyway
     if (clock.timestamp_ms()< lock_term) {
         return 0
     };
-    
 
     let eligible_term:u64 = if(pool.options.contains(KEY_WITNDRWAL_PENDING)) {
         df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITNDRWAL_PENDING)*MS_PER_DAY-issue
