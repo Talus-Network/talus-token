@@ -49,13 +49,15 @@ test-cov:
 
 # Build and test with report to console
 build-test-report PACKAGE:
-    @just build
-    @just test-cov
+    @just build-pkg {{PACKAGE}}
+    @just test-cov-pkg {{PACKAGE}}
     cd ./{{PACKAGE}} && sui move coverage summary
 
 test-report:
     @just build-test-report talus
     @just build-test-report faucet
+    @just build-test-report loyalty
+    @just build-test-report deposit_pool
 
 # Build and test in one command
 build-test: build test

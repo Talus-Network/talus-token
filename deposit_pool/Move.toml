@@ -5,7 +5,6 @@ authors = ["Talus Labs <hi@taluslabs.com>"]
 
 [dependencies]
 Talus = {local = "../talus"}
-loyalty = {local = "../loyalty"}
 
 [addresses]
 deposit_pool = "0x0"

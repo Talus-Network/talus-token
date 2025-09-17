@@ -1,38 +1,21 @@
 #!/bin/bash
+
+###########################################
+# Configuration Variables
+###########################################
 SUI="sui"
 TOTAL_AMOUNT="10^19"
+SPLIT_AMOUNT=0
+BASE_APY=2
 
-# Helper function for large number calculations
+###########################################
+# Helper Functions
+###########################################
+
+# Calculate large numbers using bc
 _calculate() {
     echo "scale=0; $1" | bc
 }
-
-DEFAULT_INIT=$(_calculate "$TOTAL_AMOUNT/2")
-
-# Add user input for RPC and alias
-read -p "Enter RPC URL (default: http://127.0.0.1:9000): " RPC_URL
-read -p "Enter environment alias (default: local): " ENV_ALIAS
-read -p "Enter faucet source size (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
-read -p "Enter exhcnage rate Talus/Sui (default: 10): " EXCHANGE_RATE
-read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
-read -p "Deploy and initialize faucet? (y/N): " DEPLOY_FAUCET
-
-
-# Set default values if no input provided
-RPC_URL=${RPC_URL:-"http://127.0.0.1:9000"}
-ENV_ALIAS=${ENV_ALIAS:-"local"}
-EXCHANGE_RATE=${EXCHANGE_RATE:-10}
-WITHDRAWAL_PCT=${WITHDRAWAL_PCT:-50}
-DEPLOY_FAUCET=${DEPLOY_FAUCET:-"n"}
-
-SPLIT_AMOUNT=0
-
-# Setup client if needed
-if ! $SUI client active-env | grep -q "$ENV_ALIAS"; then
-    echo "Setting up client with RPC: $RPC_URL and alias: $ENV_ALIAS"
-    $SUI client new-env --alias "$ENV_ALIAS" --rpc "$RPC_URL"
-    $SUI client switch --env "$ENV_ALIAS"
-fi
 
 # Helper functions for idempotency
 _checkProcess() {
@@ -40,13 +23,12 @@ _checkProcess() {
     return $?
 }
 
-# Run a command in the background.
+# Run a command in the background
 _evalBg() {
     eval "$@" &>/dev/null & disown;
 }
 
-
-# Get faucet coins if needed with retry
+# Get faucet coins with retry mechanism
 _getFaucetCoins() {
     local max_attempts=5
     local attempt=1
@@ -76,7 +58,40 @@ _getFaucetCoins() {
     done
 }
 
-# Start node if not running
+###########################################
+# User Input Configuration
+###########################################
+
+# Calculate default initialization amount
+DEFAULT_INIT=$(_calculate "$TOTAL_AMOUNT/2")
+
+# Collect user inputs with descriptive prompts
+read -p "Enter RPC URL (default: http://127.0.0.1:9000): " RPC_URL
+read -p "Enter environment alias (default: local): " ENV_ALIAS
+read -p "Enter faucet source size (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
+read -p "Enter exhcnage rate Talus/Sui (default: 10): " EXCHANGE_RATE
+read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
+read -p "Deploy and initialize faucet? (y/N): " DEPLOY_FAUCET
+
+# Set default values for configuration
+RPC_URL=${RPC_URL:-"http://127.0.0.1:9000"}
+ENV_ALIAS=${ENV_ALIAS:-"local"}
+EXCHANGE_RATE=${EXCHANGE_RATE:-10}
+WITHDRAWAL_PCT=${WITHDRAWAL_PCT:-50}
+DEPLOY_FAUCET=${DEPLOY_FAUCET:-"n"}
+
+###########################################
+# Environment Setup
+###########################################
+
+# Configure Sui client environment if not already set
+if ! $SUI client active-env | grep -q "$ENV_ALIAS"; then
+    echo "Setting up client with RPC: $RPC_URL and alias: $ENV_ALIAS"
+    $SUI client new-env --alias "$ENV_ALIAS" --rpc "$RPC_URL"
+    $SUI client switch --env "$ENV_ALIAS"
+fi
+
+# Start local node if not running
 if ! _checkProcess "$SUI start"; then
     echo "Starting Node"
     start_node="RUST_LOG=\"off,sui_node=error\" $SUI start --with-faucet --force-regenesis"
@@ -87,26 +102,34 @@ else
     echo "Node already running"
 fi
 
+###########################################
+# Token Deployment
+###########################################
+
+# Get active address
 echo "get address"
 USER=$($SUI client active-address)
 echo "Active address: \"$USER\""
 
-# Get faucet coins if needed
+# Ensure we have gas
 if ! $SUI client gas | grep -q "0x"; then
     _getFaucetCoins
 fi
 
+# Deploy main token contract
 echo "Publishing Token contract:"
-TokenContractID=$($SUI client publish --gas-budget 300000000 ./talus --json| jq -r ".objectChanges[] | select(.packageId) | .packageId")
+TokenContractID=$($SUI client publish ./talus --json| jq -r ".objectChanges[] | select(.packageId) | .packageId")
 TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 sleep 3
 echo "Token Contract at: \"$TokenContractID\""
 echo "Talus coin at : \"$TalusCoin\""
 
+###########################################
+# Faucet Deployment (Optional)
+###########################################
 
-# Only deploy faucet if requested
 if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
-    
+    # Calculate split amounts for faucet
     if [ -z "$INIT_AMOUNT" ]; then
         SPLIT_AMOUNT=$DEFAULT_INIT
     else
@@ -114,10 +137,11 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
     fi
 
     echo "Split coin"
-    $SUI client split-coin --coin-id $TalusCoin --amounts $SPLIT_AMOUNT --gas-budget 10000000
+    _spliter=$($SUI client split-coin --coin-id $TalusCoin --amounts $SPLIT_AMOUNT)
     
+    # Deploy and initialize faucet
     echo "Publishing Faucet Contract:"
-    FaucetContractID=$($SUI client publish --gas-budget 30000000 ./faucet --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
+    FaucetContractID=$($SUI client publish ./faucet --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
     sleep 3
     echo "Faucet contract at: \"$FaucetContractID\""
 
@@ -131,33 +155,99 @@ else
     echo "Skipping faucet deployment"
 fi
 
+###########################################
+# Loyalty Program Setup
+###########################################
 
+# Prepare coins for reward program
+sleep 3
 echo "Split coin for reward program"
 TalusCoin=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 RESERVE_SIZE=$(_calculate "($TOTAL_AMOUNT*85/100)-$SPLIT_AMOUNT")
-$SUI client split-coin --coin-id $TalusCoin --amounts $RESERVE_SIZE --gas-budget 10000000
+_spliter=$($SUI client split-coin --coin-id $TalusCoin --amounts $RESERVE_SIZE)
 
+# Deploy Loyalty Token Contract
+echo "Deploy Loyalty Token Contract"
+script=$($SUI client publish ./loyalty --json) 
+LoyaltyTokenContractID=$(echo $script | jq -r '.objectChanges[] | select(.packageId) | .packageId')
+LoyaltyTreasuryCap=$(echo $script | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TreasuryCap<"))) | .objectId')
 
+# Deploy Reward Program and Deposit Pool
+sleep 3
 echo "Deploy Reward Program and Deposit Pool"
-LoyaltyProgramContractID=$($SUI client publish --gas-budget 30000000 ./deposit_pool --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
+LoyaltyProgramContractID=$($SUI client publish ./deposit_pool --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
 sleep 3
 echo "Loyalty Program Contract at: \"$LoyaltyProgramContractID\""
+echo "Loyalty Token Contract at: \"$LoyaltyTokenContractID\""
+echo "Loyalty Token Cap at: \"$LoyaltyTreasuryCap\""
 
-echo "Deploy RLoyalty Token Contract"
-LoyaltyTokenContractID=$($SUI client publish --gas-budget 30000000 ./loyalty --json | jq -r '.objectChanges[] | select(.packageId) | .packageId')
-sleep 3
-echo "Loyalty Token Contract at: \"$LoyaltyProgramContractID\""
-
+# Initialize Reward Program
 echo "Init Reward Program and Deposit Pool"
-# TODO
+script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function initiate \
+        --type-args $TokenContractID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+        --args $LoyaltyTreasuryCap --args $BASE_APY --args false --args 0 \
+        --json)
+ADMIN_CAP=$(echo $script| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("AdminCap"))) | .objectId')
+DEPOSIT_POOL=$(echo $script| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("DepositPool"))) | .objectId')
+echo "Pool at: $DEPOSIT_POOL"
+echo "admin cap at $ADMIN_CAP"
 
-# echo "test mint"
+# Setup Reward Pool
+sleep 3
+echo "initiate reward program"
+REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_program --function new_reward_pool \
+        --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+        --type-args $TokenContractID::us::US  \
+        --args $TalusCoin --args 1 --json | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
+
+sleep 3
+echo "reward pool at $REWARD_POOL"
+echo "register reward pool"
+
+# Register Reward Program
+PolicyID=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function add_reward_program \
+        --type-args $LoyaltyProgramContractID::reward_program::RewardProgram \
+        --type-args $TokenContractID::us::US \
+        --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+        --args $DEPOSIT_POOL --args $ADMIN_CAP \
+        --gas-budget 30000000 --json| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TokenPolicy"))) | .objectId' )
+        
+echo "Policy at $PolicyID"
+
+###########################################
+# Test Commands (Commented Out)
+###########################################
+
+# Test mint
 # $SUI client call --package $FaucetContractID --module faucet --function mint \
 #         --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
-#         --args $FaucetID --args <sui coin id> \
+#         --args $FaucetID --args 0x2aecc575afe2859ddd56710c70f9c76845efbb3b4721f30438b60a815814b752 \
 #         --dry-run
+
 # echo "test refund"
 # $SUI client call --package $FaucetContractID --module faucet --function refund \
 #         --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
 #         --args $FaucetID --args <talus coin id> \
 #         --dry-run
+
+# echo "Test deposit to pool"
+#  $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#          --function deposit \
+#          --type-args $TokenContractID::us::US \
+#          --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#          --args $DEPOSIT_POOL \
+#          --args <us coin id> \
+#          --args 0 --args 0x6 --args $USER --dry-run
+
+# echo "Test withdrawal from pool"
+# $SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function withdraw \
+#         --type-args $TokenContractID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args <receipt_nft_id> \
+#         --gas-budget 10000000
+
+# echo "Test claim reward"
+# $SUI client call --package $LoyaltyProgramContractID --module reward_program \
+#         --function claim \
+#         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \ 
+#         --type-args $TokenContractID::us::US 
+#         --args $DEPOSIT_POOL --args <token id> --args $PolicyID \
