@@ -20,7 +20,7 @@ public struct AdminCap has key, store {
 }
 
 /// Event emitted when the reward pool is refreshed with new rewards
-public struct ProgramFreshEvent has copy, drop {
+public struct PoolFreshEvent has copy, drop {
     pool_id: ID,
     amount: u64,
 }
@@ -67,7 +67,8 @@ entry fun reward_fresh<Loyalty, Reward>(
     pool: &mut RewardPool<Loyalty, Reward>,
     coin: Coin<Reward>,
 ) {
-    event::emit(ProgramFreshEvent {
+    event::emit(PoolFreshEvent
+ {
         pool_id: id(pool),
         amount: coin.value(),
     });
@@ -102,7 +103,7 @@ public fun claim<Loyalty, Reward>(
 }
 
 #[allow(lint(self_transfer))]
-public fun revoke_program<Loyalty, Reward>(
+public fun revoke_pool<Loyalty, Reward>(
     pool: RewardPool<Loyalty, Reward>,
     admin_cap: &mut AdminCap,
     ctx: &mut TxContext,

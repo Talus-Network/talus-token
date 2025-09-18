@@ -6,7 +6,7 @@ use deposit_pool::reward_pool::{
     RewardPool,
     RewardProgram,
     new_reward_pool,
-    revoke_program,
+    revoke_pool,
     update_rate,
     E_NOT_ADMIN,
     AdminCap
@@ -183,7 +183,7 @@ fun test_revoke_with_admin() {
         let pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
         let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
 
-        revoke_program(
+        revoke_pool(
             pool,
             &mut admin_cap,
             scenario.ctx(),
@@ -219,7 +219,7 @@ fun test_revoke_with_wrong_admin() {
         let second_pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
         let mut first_admin = scenario.take_from_sender<AdminCap>();
 
-        revoke_program(
+        revoke_pool(
             second_pool,
             &mut first_admin,
             scenario.ctx(),

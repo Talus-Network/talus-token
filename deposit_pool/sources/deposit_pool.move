@@ -28,7 +28,7 @@ const E_PENDING_WITHDRAWAL: u64 = 5;
 // ====================== Const =================
 /// Current version of the contract
 const VERSION: u64 = 1;
-/// Milliseconds in one day
+/// Milliseconds in one day (<2^27)
 const MS_PER_DAY: u64 = 86400000;
 /// Option key for early withdrawal support
 const KEY_SUPPORT_EARLY_WITHDRAWAL: u8 = 1;
@@ -46,7 +46,7 @@ public struct DepositPool<phantom Base, phantom Loyalty> has key {
     /// Treasury capability for minting loyalty tokens
     treasury_cap: TreasuryCap<Loyalty>,
     /// Mapping of lock periods to APY rates
-    return_rates: Table<u64, u8>,
+    return_rates: Table<u32, u8>,
     /// ID of the admin capability
     admin_cap_id: ID,
     /// Contract version
@@ -75,7 +75,7 @@ entry fun initiate<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
     base_apy: u8,
     early_withdrawal: bool, // Fixed typo in ealry_withdrawal
-    withdrawal_pending: u64, // Fixed typo in witndrawal_pending
+    withdrawal_pending: u32, // Fixed typo in witndrawal_pending
     ctx: &mut TxContext,
 ) {
     let admin = AdminCap {
@@ -107,7 +107,7 @@ entry fun initiate<Base, Loyalty>(
 public fun deposit<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     coin: Coin<Base>,
-    term: u64,
+    term: u32,
     clock: &Clock,
     recipient: address,
     ctx: &mut TxContext,
@@ -115,7 +115,7 @@ public fun deposit<Base, Loyalty>(
     assert!(pool.version == VERSION, E_WRONG_VERSION);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
-        (term, pool.return_rates.borrow(term))
+        (term as u64, pool.return_rates.borrow(term))
     } else {
         (0, pool.return_rates.borrow(0))
     };
@@ -126,7 +126,7 @@ public fun deposit<Base, Loyalty>(
             pool_id: object::id(pool),
             amount: coin.value(),
             issue: clock.timestamp_ms(),
-            term: clock.timestamp_ms()+lock_term*MS_PER_DAY,
+            term: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
             apy: *apy,
         },
         recipient,
@@ -162,7 +162,7 @@ entry fun withdrawal<Base, Loyalty>(
             df::add(
                 &mut pool.id,
                 id(&receipt),
-                clock.timestamp_ms() +*pool.options.borrow(KEY_WITHDRAWAL_PENDING)*MS_PER_DAY,
+                clock.timestamp_ms() +((*pool.options.borrow<u8,u32>(KEY_WITHDRAWAL_PENDING) )as u64)*MS_PER_DAY,
             );
             transfer::transfer(receipt, ctx.sender());
             return
@@ -194,7 +194,7 @@ entry fun withdrawal<Base, Loyalty>(
 public fun upsert_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
-    days: u64,
+    days: u32,
     apy: u8,
 ) {
     assert!(pool.admin_cap_id == object::id(admin), E_NOT_ADMIN);
@@ -222,7 +222,7 @@ public fun cancel_pending_withdrawal<Base, Loyalty>(
 public fun delete_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
-    days: u64,
+    days: u32,
 ) {
     assert!(pool.admin_cap_id == object::id(admin), E_NOT_ADMIN);
     assert!(pool.version == VERSION, E_WRONG_VERSION);
@@ -277,11 +277,12 @@ fun calculate_token_amount<Base, Loyalty>(
     };
 
     let eligible_term: u64 = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
-        df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITHDRAWAL_PENDING) * MS_PER_DAY - issue_time
+        df::remove(&mut pool.id, receipt_id) - ((*pool.options.borrow<u8,u32>(KEY_WITHDRAWAL_PENDING) )as u64) * MS_PER_DAY - issue_time
     } else {
         clock.timestamp_ms() - issue_time
-    }.divide_and_round_up(MS_PER_DAY);
+    }.divide_and_round_up(MS_PER_DAY); // <u32
 
-    let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(100);
-    (eligible_term as u128 * yearly_return).divide_and_round_up(365).try_as_u64().extract()
+    let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(100); // <u65
+    (eligible_term as u128 * yearly_return).divide_and_round_up(365).try_as_u64().destroy_or!(0) 
+    // in a conrner case, eligible term * yearly return is larger than u64, so we stop issue token to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
 }
