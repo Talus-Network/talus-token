@@ -159,9 +159,9 @@ fi
 # Loyalty Program Setup
 ###########################################
 
-# Prepare coins for reward program
+# Prepare coins for reward pool
 sleep 3
-echo "Split coin for reward program"
+echo "Split coin for reward pool"
 TALUS_COIN=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 RESERVE_SIZE=$(_calculate_amount "($TOTAL_SUPPLY*85/100)-$SPLIT_AMOUNT")
 _spliter=$($SUI client split-coin --coin-id $TALUS_COIN --amounts $RESERVE_SIZE)
@@ -172,17 +172,17 @@ script=$($SUI client publish ./loyalty --json)
 LoyaltyTokenContractID=$(echo $script | jq -r '.objectChanges[] | select(.packageId) | .packageId')
 LoyaltyTreasuryCap=$(echo $script | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TreasuryCap<"))) | .objectId')
 
-# Deploy Reward Program and Deposit Pool
+# Deploy reward pool and Deposit Pool
 sleep 3
-echo "Deploy Reward Program and Deposit Pool"
+echo "Deploy reward pool and Deposit Pool"
 LoyaltyProgramContractID=$($SUI client publish ./deposit_pool --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
 sleep 3
 echo "Loyalty Program Contract at: \"$LoyaltyProgramContractID\""
 echo "Loyalty Token Contract at: \"$LoyaltyTokenContractID\""
 echo "Loyalty Token Cap at: \"$LoyaltyTreasuryCap\""
 
-# Initialize Reward Program
-echo "Init Reward Program and Deposit Pool"
+# Initialize reward pool
+echo "Init reward pool and Deposit Pool"
 script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function initiate \
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $LoyaltyTreasuryCap --args $BASE_APY --args false --args 0 \
@@ -194,7 +194,7 @@ echo "admin cap at $ADMIN_CAP"
 
 # Setup Reward Pool
 sleep 3
-echo "initiate reward program"
+echo "initiate reward pool"
 REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_program --function new_reward_pool \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --type-args $TOKEN_CONTRACT_ID::us::US  \
@@ -204,7 +204,7 @@ sleep 3
 echo "reward pool at $REWARD_POOL"
 echo "register reward pool"
 
-# Register Reward Program
+# Register reward pool
 PolicyID=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function add_reward_program \
         --type-args $LoyaltyProgramContractID::reward_program::RewardProgram \
         --type-args $TOKEN_CONTRACT_ID::us::US \

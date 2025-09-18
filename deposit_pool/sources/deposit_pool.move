@@ -2,14 +2,14 @@
 /// Users can lock their tokens for different time periods with varying APY rates.
 module deposit_pool::deposit_pool;
 
+use sui::bag::{Self, Bag};
 use sui::balance::{zero, Balance};
 use sui::clock::Clock;
 use sui::coin::{TreasuryCap, Coin};
-use sui::table::{Self, Table};
 use sui::dynamic_field as df;
-use sui::bag::{Self,Bag};
-use sui::token;
 use sui::object::id;
+use sui::table::{Self, Table};
+use sui::token;
 
 // ===================== Error Codes================
 /// Error when caller is not the admin
@@ -21,18 +21,18 @@ const E_WRONG_VERSION: u64 = 2;
 /// Error when receipt is from different pool
 const E_WRONG_POOL: u64 = 3;
 /// Error when early withdrawal is not supported
-const E_NOT_SUPPORT_EARLY_WITHDRAWAL:u64 = 4;
+const E_NOT_SUPPORT_EARLY_WITHDRAWAL: u64 = 4;
 /// Error when withdrawal is still in pending state
-const E_PENDING_WITHDRAWAL:u64 = 5;
+const E_PENDING_WITHDRAWAL: u64 = 5;
 
 // ====================== Const =================
 /// Current version of the contract
 const VERSION: u64 = 1;
 /// Milliseconds in one day
-const MS_PER_DAY:u64 = 86400000;
+const MS_PER_DAY: u64 = 86400000;
 /// Option key for early withdrawal support
 const KEY_SUPPORT_EARLY_WITHDRAWAL: u8 = 1;
-const KEY_WITHDRAWAL_PENDING: u8 = 2;  // Fixed typo in WITNDRWAL
+const KEY_WITHDRAWAL_PENDING: u8 = 2; // Fixed typo in WITNDRWAL
 
 public struct AdminCap has key, store {
     id: UID,
@@ -74,8 +74,8 @@ public struct Receipt has key {
 entry fun initiate<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
     base_apy: u8,
-    early_withdrawal: bool,  // Fixed typo in ealry_withdrawal
-    withdrawal_pending: u64,  // Fixed typo in witndrawal_pending
+    early_withdrawal: bool, // Fixed typo in ealry_withdrawal
+    withdrawal_pending: u64, // Fixed typo in witndrawal_pending
     ctx: &mut TxContext,
 ) {
     let admin = AdminCap {
@@ -88,12 +88,12 @@ entry fun initiate<Base, Loyalty>(
         admin_cap_id: object::id(&admin),
         return_rates: table::new(ctx),
         version: VERSION,
-        options: bag::new(ctx)
+        options: bag::new(ctx),
     };
 
     pool.options.add(KEY_SUPPORT_EARLY_WITHDRAWAL, early_withdrawal);
 
-    if(withdrawal_pending > 0) {
+    if (withdrawal_pending > 0) {
         pool.options.add(KEY_WITHDRAWAL_PENDING, withdrawal_pending);
     };
 
@@ -146,17 +146,24 @@ entry fun withdrawal<Base, Loyalty>(
     assert!(receipt.pool_id == object::id(pool), E_WRONG_POOL);
 
     // Check eligible for execute withdrawal
-    if(pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
+    if (pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
         assert!(clock.timestamp_ms() > receipt.term, E_NOT_SUPPORT_EARLY_WITHDRAWAL);
     };
 
-    if(pool.options.contains(KEY_WITHDRAWAL_PENDING)){
-        if(df::exists_(&pool.id, id(&receipt))) {
+    if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
+        if (df::exists_(&pool.id, id(&receipt))) {
             // ensure pending is passed.
-            assert!(*df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(),E_PENDING_WITHDRAWAL);
-        }else{
+            assert!(
+                *df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(),
+                E_PENDING_WITHDRAWAL,
+            );
+        } else {
             // add pending and finish the call.
-            df::add(&mut pool.id, id(&receipt), clock.timestamp_ms() +*pool.options.borrow(KEY_WITHDRAWAL_PENDING)*MS_PER_DAY);
+            df::add(
+                &mut pool.id,
+                id(&receipt),
+                clock.timestamp_ms() +*pool.options.borrow(KEY_WITHDRAWAL_PENDING)*MS_PER_DAY,
+            );
             transfer::transfer(receipt, ctx.sender());
             return
         }
@@ -165,7 +172,7 @@ entry fun withdrawal<Base, Loyalty>(
     // consume receipt
     let Receipt { id, .., amount, issue, term, apy } = receipt;
     let token_amount = calculate_token_amount(pool, clock, id.to_inner(), amount, term, issue, apy);
-    if(token_amount>0){
+    if (token_amount>0) {
         let token = token::mint<Loyalty>(
             &mut pool.treasury_cap,
             token_amount,
@@ -174,8 +181,8 @@ entry fun withdrawal<Base, Loyalty>(
         let req = token::transfer(token, ctx.sender(), ctx);
 
         token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
-    }; 
-    
+    };
+
     id.delete();
 
     // return base
@@ -203,14 +210,13 @@ public fun upsert_lock_term<Base, Loyalty>(
 /// Cancels a pending withdrawal request
 public fun cancel_pending_withdrawal<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
-    receipt: &mut Receipt
+    receipt: &mut Receipt,
 ) {
     assert!(pool.version == VERSION, E_WRONG_VERSION);
     assert!(receipt.pool_id == object::id(pool), E_WRONG_POOL);
     // lock_term in ms
-    df::remove<_,u64>(&mut pool.id, id(receipt));
+    df::remove<_, u64>(&mut pool.id, id(receipt));
 }
-
 
 #[allow(unused_mut_parameter)]
 public fun delete_lock_term<Base, Loyalty>(
@@ -224,8 +230,8 @@ public fun delete_lock_term<Base, Loyalty>(
     pool.return_rates.remove(days);
 }
 
-/// Adds a new reward program policy for loyalty tokens
-#[allow(unused_mut_parameter,lint(self_transfer))]
+/// Adds a new reward pool policy for loyalty tokens
+#[allow(unused_mut_parameter, lint(self_transfer))]
 public fun add_reward_program<Policy: drop, Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
@@ -255,24 +261,22 @@ entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &
     pool.version = VERSION;
 }
 
-
-
 /// Calculates the amount of loyalty tokens to be minted based on deposit terms
 fun calculate_token_amount<Base, Loyalty>(
-    pool: &mut DepositPool<Base, Loyalty>, 
-    clock: &Clock, 
-    receipt_id: ID, 
-    amount: u64, 
-    lock_term: u64, 
-    issue_time: u64,  // Changed from issue to issue_time
-    apy: u8
+    pool: &mut DepositPool<Base, Loyalty>,
+    clock: &Clock,
+    receipt_id: ID,
+    amount: u64,
+    lock_term: u64,
+    issue_time: u64, // Changed from issue to issue_time
+    apy: u8,
 ): u64 {
     // no additional token anyway
     if (clock.timestamp_ms()< lock_term) {
         return 0
     };
 
-    let eligible_term: u64 = if(pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
+    let eligible_term: u64 = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITHDRAWAL_PENDING) * MS_PER_DAY - issue_time
     } else {
         clock.timestamp_ms() - issue_time

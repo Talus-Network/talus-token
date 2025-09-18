@@ -1,6 +1,6 @@
 # Talus Token Project
 
-This repository contains the smart contracts for the Talus Token project on Sui blockchain, featuring a custom token, a decentralized faucet for token distribution, a deposit pool for yield generation, and a reward program for loyalty incentives.
+This repository contains the smart contracts for the Talus Token project on Sui blockchain, featuring a custom token, a decentralized faucet for token distribution, a deposit pool for yield generation, and a reward pool for loyalty incentives.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ talus-token/
 ├── talus/             # US token (Coin) 
 ├── faucet/            # Bi-directional faucet contract
 ├── loyalty/           # Loyalty token
-├── deposit_pool/      # Deposit pool and reward program contracts
+├── deposit_pool/      # Deposit pool and reward pool contracts
 └── deploy.sh          # Deployment script
 ```
 
@@ -40,7 +40,7 @@ The deposit pool module allows users to deposit base tokens and earn loyalty tok
 - Multiple lock terms with configurable APY
 - Early withdrawal support (configurable)
 - Pending withdrawal period (optional)
-- Admin-controlled reward program integration
+- Admin-controlled reward pool integration
 - Receipts for each deposit, enabling precise reward calculation
 
 #### Usage
@@ -62,9 +62,9 @@ deposit_pool::deposit_pool::deposit(pool, base_coin, term_days, clock, recipient
 deposit_pool::deposit_pool::withdrawal(pool, receipt, clock, ctx);
 ```
 
-### Reward Program Module
+### Reward Pool Module
 
-The reward program module manages reward pools and allows users to claim rewards by spending loyalty tokens. Pools can be refreshed with more rewards, and events are emitted for transparency.
+The reward pool module manages reward pools and allows users to claim rewards by spending loyalty tokens. Pools can be refreshed with more rewards, and events are emitted for transparency.
 
 #### Usage
 
@@ -137,7 +137,7 @@ The contracts include several security measures:
 - Shared object model ensures equal access
 - Idempotent deployment process
 - Retry mechanisms for faucet operations
-- Admin controls for deposit pool and reward program configuration
+- Admin controls for deposit pool and reward pool configuration
 
 ## Configuration
 
