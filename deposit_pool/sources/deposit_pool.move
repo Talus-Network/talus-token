@@ -200,7 +200,6 @@ entry fun withdraw<Base, Loyalty>(
 }
 
 /// Updates or adds a new lock term period with corresponding APY
-#[allow(unused_mut_parameter)]
 public fun upsert_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
@@ -228,7 +227,6 @@ public fun cancel_pending_withdrawal<Base, Loyalty>(
     df::remove<_, u64>(&mut pool.id, id(receipt));
 }
 
-#[allow(unused_mut_parameter)]
 public fun delete_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
@@ -241,7 +239,7 @@ public fun delete_lock_term<Base, Loyalty>(
 }
 
 /// Adds a new reward pool policy for loyalty tokens
-#[allow(unused_mut_parameter, lint(self_transfer))]
+#[allow(lint(self_transfer))]
 public fun add_reward_program<Policy: drop, Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
