@@ -20,13 +20,13 @@ public struct AdminCap has key, store {
 }
 
 /// Event emitted when the reward pool is refreshed with new rewards
-public struct PoolFreshEvent has copy, drop {
+public struct PoolFreshedEvent has copy, drop {
     pool_id: ID,
     amount: u64,
 }
 
 /// Event emitted when a user redeems a reward
-public struct RedeemEvent has copy, drop {
+public struct RewardRedeemedEvent has copy, drop {
     token_name: String,
     amount: u64,
     user_address: address,
@@ -67,7 +67,7 @@ entry fun reward_fresh<Loyalty, Reward>(
     pool: &mut RewardPool<Loyalty, Reward>,
     coin: Coin<Reward>,
 ) {
-    event::emit(PoolFreshEvent {
+    event::emit(PoolFreshedEvent {
         pool_id: id(pool),
         amount: coin.value(),
     });
@@ -84,7 +84,7 @@ public fun claim<Loyalty, Reward>(
     policy: &mut TokenPolicy<Loyalty>,
     ctx: &mut TxContext,
 ) {
-    let claim_amount = token.value().divide_and_round_up(pool.exchange_rate as u64); // Changed from claim
+    let claim_amount = token.value()/(pool.exchange_rate as u64);
 
     assert!(claim_amount <= pool.balance.value(), EPoolInsufficient);
 
@@ -94,7 +94,7 @@ public fun claim<Loyalty, Reward>(
     let (token_name, amount, user_address, _) = confirm_request_mut(policy, req, ctx);
 
     transfer::public_transfer(pool.balance.split(claim_amount).into_coin(ctx), ctx.sender());
-    event::emit(RedeemEvent {
+    event::emit(RewardRedeemedEvent {
         token_name,
         amount,
         user_address,

@@ -153,8 +153,10 @@ fun test_claim_insufficient_pool() {
     {
         let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
         let mut policy = ts::take_shared<TokenPolicy<Loyalty>>(&scenario);
+
+        // force to try claim more than supply
         let loyalty_tokens = token::mint_for_testing(
-            INITIAL_SUPPLY * (RATE as u64) + 1,
+            RATE as u64 + INITIAL_SUPPLY * (RATE as u64),
             scenario.ctx(),
         );
 

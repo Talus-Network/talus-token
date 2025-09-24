@@ -43,7 +43,7 @@ fun test_pool_initialization() {
 }
 
 #[test]
-fun test_deposit_and_withdrawal() {
+fun test_deposit_and_withdraw_success() {
     let mut scenario = init_deposit_pool(true, 0);
 
     // Setup clock
@@ -186,8 +186,8 @@ fun test_early_withdrawal_allowed() {
         );
     };
 
-    // Advance clock but not past term (15 days)
-    clock.increment_for_testing(MS_PER_DAY * 15);
+    // just before mature
+    clock.increment_for_testing(Lock_DAY as u64* MS_PER_DAY - 1);
 
     scenario.next_tx(USER);
     {
@@ -219,7 +219,7 @@ fun test_early_withdrawal_allowed() {
 }
 
 #[test]
-fun test_withdrawal_with_rewards() {
+fun test_withdrawal_at_mature() {
     let mut scenario = init_deposit_pool(true, 0);
 
     // Setup clock
@@ -243,7 +243,7 @@ fun test_withdrawal_with_rewards() {
             scenario.ctx(),
         );
 
-        // Advance clock past term (60 days)
+        // Advance clock past term
         clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY);
 
         scenario.next_tx(USER);
@@ -268,9 +268,10 @@ fun test_withdrawal_with_rewards() {
 
         // Calculate expected rewards (deposit_amount * APY * days / 365)
         // Base_APY is 5%
-        let expected_rewards = (
-            (((Deposit as u128) * (2* Base_APY as u128)).divide_and_round_up(100)) * (Lock_DAY as u128),
-        ).divide_and_round_up(365);
+        let expected_rewards =
+            (
+            (((Deposit as u128) * (2* Base_APY as u128))/100) * (Lock_DAY as u128),
+        )/365;
         assert!(loyalty_tokens.value() == (expected_rewards as u64), 3);
 
         ts::return_to_address(USER, returned_coin);
@@ -371,9 +372,10 @@ fun test_withdrawal_honors_original_apy() {
 
         // Calculate expected rewards with original higher APY
         // (deposit_amount * higher_apy * days / 365)
-        let expected_rewards = (
-            (((Deposit as u128) * (higher_apy as u128) ).divide_and_round_up(100)) * ((Lock_DAY+1) as u128 ),
-        ).divide_and_round_up(365);
+        let expected_rewards =
+            (
+            (((Deposit as u128) * (higher_apy as u128) )/100) * ((Lock_DAY+1) as u128 ),
+        )/365;
         assert!(loyalty_tokens.value() == (expected_rewards as u64), 3);
 
         ts::return_to_address(USER, returned_coin);
@@ -386,7 +388,7 @@ fun test_withdrawal_honors_original_apy() {
 }
 
 #[test]
-fun test_withdrawal_pending_with_early_withdrawal() {
+fun test_early_withdrawl_with_pending_allowed() {
     let mut scenario = init_deposit_pool(true, Pending_DAY);
     // Enable withdrawal pending for Pending_DAY days
 
@@ -445,10 +447,77 @@ fun test_withdrawal_pending_with_early_withdrawal() {
     clock::destroy_for_testing(clock);
     ts::end(scenario);
 }
+#[test]
+fun test_early_withdrawl_with_pending_allowed_and_withdrawal_after_mature() {
+    let mut scenario = init_deposit_pool(true, Pending_DAY);
+    // Enable withdrawal pending for Pending_DAY days
+
+    scenario.next_tx(ADMIN);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    add_lock_term_for_testing(&mut scenario, &mut pool, Lock_DAY, Base_APY);
+
+    // Setup clock
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    scenario.next_tx(USER);
+    {
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        deposit_pool::deposit(
+            &mut pool,
+            coin_base,
+            Lock_DAY,
+            USER,
+            &clock,
+            scenario.ctx(),
+        );
+
+        scenario.next_tx(USER);
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+
+        // Advance clock just before mature
+        clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY-1);
+
+        deposit_pool::withdraw(
+            &mut pool,
+            receipt,
+            &clock,
+            scenario.ctx(),
+        );
+
+        scenario.next_tx(USER);
+        // Advance clock past the pending period (38 days)
+        clock.increment_for_testing(Pending_DAY as u64 * MS_PER_DAY);
+
+        // need to pick receipt again
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+
+        deposit_pool::withdraw(
+            &mut pool,
+            receipt,
+            &clock,
+            scenario.ctx(),
+        );
+
+        scenario.next_tx(USER);
+        // Verify base tokens returned
+        let returned_coin = ts::take_from_address<Coin<Base>>(&scenario, USER);
+        assert!(coin::value(&returned_coin) == Deposit, 1);
+
+        // still early withdrawl, no token return
+        assert!(!ts::has_most_recent_for_sender<Token<Loyalty>>(&scenario), 2);
+        returned_coin.burn_for_testing();
+    };
+
+    ts::return_shared(pool);
+    clock::destroy_for_testing(clock);
+    ts::end(scenario);
+}
 
 #[test]
 #[expected_failure(abort_code = EPendingWithdrawal)]
-fun test_withdrawal_pending_before_pending_finished() {
+fun test_withdrawal_before_pending_finished() {
     let mut scenario = init_deposit_pool(true, Pending_DAY); // Enable withdrawal pending for Pending_DAY days
 
     // Setup clock
@@ -481,7 +550,7 @@ fun test_withdrawal_pending_before_pending_finished() {
 
         scenario.next_tx(USER);
         // Advance clock past the pending period (less than Pending_DAY days)
-        clock.increment_for_testing(MS_PER_DAY * 6);
+        clock.increment_for_testing(Pending_DAY as u64* MS_PER_DAY -1);
 
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
@@ -502,16 +571,18 @@ fun test_withdrawal_pending_before_pending_finished() {
 
 #[test]
 #[expected_failure(abort_code = ENotSupportEarlyWithdrawal)]
-fun test_early_withdrawal_with_pending() {
+fun test_early_withdrawal_with_pending_pool_not_allowed() {
     let mut scenario = init_deposit_pool(false, Pending_DAY); // Enable withdrawal pending for Pending_DAY days
 
     // Setup clock
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock::set_for_testing(&mut clock, 0);
 
+    scenario.next_tx(ADMIN);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    add_lock_term_for_testing(&mut scenario, &mut pool, Lock_DAY, Base_APY);
     scenario.next_tx(USER);
     {
-        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
         deposit_pool::deposit(
@@ -534,16 +605,15 @@ fun test_early_withdrawal_with_pending() {
             &clock,
             scenario.ctx(),
         );
-
-        ts::return_shared(pool);
     };
 
+    ts::return_shared(pool);
     clock::destroy_for_testing(clock);
     ts::end(scenario);
 }
 
 #[test]
-fun test_enable_withdrawal_pending_finish_lock_term() {
+fun test_withdrawal_with_pending_at_mature() {
     let mut scenario = init_deposit_pool(true, Pending_DAY); // Enable withdrawal pending for Pending_DAY days
 
     let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
@@ -566,25 +636,9 @@ fun test_enable_withdrawal_pending_finish_lock_term() {
             scenario.ctx(),
         );
 
-        // Advance clock past the pending period (8 days)
-        clock.increment_for_testing(MS_PER_DAY * 8);
-
-        scenario.next_tx(USER);
-
-        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
-
-        deposit_pool::deposit(
-            &mut pool,
-            coin_base,
-            Lock_DAY, // 60 days term
-            USER,
-            &clock,
-            scenario.ctx(),
-        );
-
         scenario.next_tx(USER);
         // Advance clock past the lock period (61 days)
-        clock.increment_for_testing(MS_PER_DAY * (Lock_DAY as u64+1));
+        clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         deposit_pool::withdraw(
@@ -614,9 +668,10 @@ fun test_enable_withdrawal_pending_finish_lock_term() {
         assert!(coin::value(&returned_coin) == Deposit, 1);
         // properly withdrawal
         let reward = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
-        let expected_rewards = (
-            (((Deposit as u128) * (2*Base_APY as u128) ).divide_and_round_up(100)) * (1+Lock_DAY as u128 ),
-        ).divide_and_round_up(365);
+        let expected_rewards =
+            (
+            (((Deposit as u128) * (2*Base_APY as u128) )/100) * (Lock_DAY as u128 ),
+        )/365;
         assert!(reward.value()==expected_rewards as u64, 2);
 
         reward.burn_for_testing();
@@ -698,9 +753,10 @@ fun test_cancel_pending_withdrawal() {
         assert!(coin::value(&returned_coin) == Deposit, 1);
 
         let reward = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
-        let expected_rewards = (
-            (((Deposit as u128) * (2*Base_APY as u128) ).divide_and_round_up(100)) * (Lock_DAY as u128),
-        ).divide_and_round_up(365);
+        let expected_rewards =
+            (
+            (((Deposit as u128) * (2*Base_APY as u128) )/100) * (Lock_DAY as u128),
+        )/365;
         assert!(reward.value()==expected_rewards as u64, 2);
 
         returned_coin.burn_for_testing();

@@ -67,9 +67,9 @@ public struct Receipt has key {
     /// Amount of base tokens deposited
     amount: u64,
     /// Timestamp when deposit was made
-    issue: u64,
+    issue_at_ms: u64,
     /// Timestamp when lock period ends
-    term: u64,
+    mature_at_ms: u64,
     /// APY rate for this deposit
     apy: u8,
 }
@@ -98,7 +98,7 @@ entry fun new<Base, Loyalty>(
     pool.options.add(KEY_SUPPORT_EARLY_WITHDRAWAL, early_withdrawal);
 
     if (withdrawal_pending > 0) {
-        pool.options.add(KEY_WITHDRAWAL_PENDING, withdrawal_pending);
+        pool.options.add(KEY_WITHDRAWAL_PENDING, withdrawal_pending as u64 *MS_PER_DAY);
     };
 
     pool.return_rates.add(0, base_apy);
@@ -130,8 +130,8 @@ public fun deposit<Base, Loyalty>(
             id: object::new(ctx),
             pool_id: object::id(pool),
             amount: coin.value(),
-            issue: clock.timestamp_ms(),
-            term: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
+            issue_at_ms: clock.timestamp_ms(),
+            mature_at_ms: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
             apy: *apy,
         },
         recipient,
@@ -152,7 +152,7 @@ entry fun withdraw<Base, Loyalty>(
 
     // Check eligible for execute withdrawal
     if (pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
-        assert!(clock.timestamp_ms() > receipt.term, ENotSupportEarlyWithdrawal);
+        assert!(clock.timestamp_ms() >= receipt.mature_at_ms, ENotSupportEarlyWithdrawal);
     };
 
     if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
@@ -164,7 +164,7 @@ entry fun withdraw<Base, Loyalty>(
             df::add(
                 &mut pool.id,
                 id(&receipt),
-                clock.timestamp_ms() +((*pool.options.borrow<u8,u32>(KEY_WITHDRAWAL_PENDING) )as u64)*MS_PER_DAY,
+                clock.timestamp_ms() + *pool.options.borrow(KEY_WITHDRAWAL_PENDING),
             );
             transfer::transfer(receipt, ctx.sender());
             return
@@ -172,8 +172,16 @@ entry fun withdraw<Base, Loyalty>(
     };
 
     // consume receipt
-    let Receipt { id, .., amount, issue, term, apy } = receipt;
-    let token_amount = calculate_token_amount(pool, clock, id.to_inner(), amount, term, issue, apy);
+    let Receipt { id, .., amount, issue_at_ms, mature_at_ms, apy } = receipt;
+    let token_amount = calculate_token_amount(
+        pool,
+        clock,
+        id.to_inner(),
+        amount,
+        mature_at_ms,
+        issue_at_ms,
+        apy,
+    );
     if (token_amount>0) {
         let token = token::mint<Loyalty>(
             &mut pool.treasury_cap,
@@ -269,25 +277,23 @@ fun calculate_token_amount<Base, Loyalty>(
     clock: &Clock,
     receipt_id: ID,
     amount: u64,
-    lock_term: u64,
-    issue_time: u64, // Changed from issue to issue_time
+    mature_at_ms: u64,
+    issue_at_ms: u64,
     apy: u8,
 ): u64 {
+    let withdraw_at_ms = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
+        df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITHDRAWAL_PENDING)
+    } else {
+        clock.timestamp_ms()
+    };
     // no additional token anyway
-    if (clock.timestamp_ms()< lock_term) {
+    if (withdraw_at_ms < mature_at_ms) {
         return 0
     };
 
-    let eligible_term: u64 = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
-        df::remove(&mut pool.id, receipt_id) - ((*pool.options.borrow<u8,u32>(KEY_WITHDRAWAL_PENDING) )as u64) * MS_PER_DAY - issue_time
-    } else {
-        clock.timestamp_ms() - issue_time
-    }.divide_and_round_up(MS_PER_DAY); // <u32
+    let eligible_term: u64 = (withdraw_at_ms - issue_at_ms)/MS_PER_DAY; // <u32
 
-    let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(MAX_PCT); // <u65
-    (eligible_term as u128 * yearly_return)
-        .divide_and_round_up(DAY_PER_YEAR)
-        .try_as_u64()
-        .destroy_or!(0)
-    // in a conrner case, eligible term * yearly return is larger than u64, so we stop issue token to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
+    let yearly_return = (amount as u128 * (apy as u128))/(MAX_PCT); // <u65
+    ((eligible_term as u128 * yearly_return)/DAY_PER_YEAR).try_as_u64().destroy_or!(0)
+    // in a conrner case, eligible term * yearly return is larger than u64, so we stop issue_at_ms token to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
 }
