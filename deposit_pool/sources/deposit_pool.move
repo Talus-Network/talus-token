@@ -13,26 +13,30 @@ use sui::token;
 
 // ===================== Error Codes================
 /// Error when caller is not the admin
-const E_NOT_ADMIN: u64 = 0;
+const ENotAdmin: u64 = 0;
 /// Error when trying to upgrade from current version
-const E_NOT_UPGRADE: u64 = 1;
+const ENotUpgrade: u64 = 1;
 /// Error when version mismatch is detected
-const E_WRONG_VERSION: u64 = 2;
+const EWrongVersion: u64 = 2;
 /// Error when receipt is from different pool
-const E_WRONG_POOL: u64 = 3;
+const EWrongPool: u64 = 3;
 /// Error when early withdrawal is not supported
-const E_NOT_SUPPORT_EARLY_WITHDRAWAL: u64 = 4;
+const ENotSupportEarlyWithdrawal: u64 = 4;
 /// Error when withdrawal is still in pending state
-const E_PENDING_WITHDRAWAL: u64 = 5;
+const EPendingWithdrawal: u64 = 5;
 
 // ====================== Const =================
 /// Current version of the contract
 const VERSION: u64 = 1;
 /// Milliseconds in one day (<2^27)
 const MS_PER_DAY: u64 = 86400000;
+const MAX_PCT: u128 = 100;
+const DAY_PER_YEAR: u128 = 365;
+
 /// Option key for early withdrawal support
 const KEY_SUPPORT_EARLY_WITHDRAWAL: u8 = 1;
-const KEY_WITHDRAWAL_PENDING: u8 = 2; // Fixed typo in WITNDRWAL
+/// Option key for withdrawal pending window
+const KEY_WITHDRAWAL_PENDING: u8 = 2;
 
 public struct AdminCap has key, store {
     id: UID,
@@ -71,11 +75,11 @@ public struct Receipt has key {
 }
 
 /// Initializes a new deposit pool with base APY and configuration
-entry fun initiate<Base, Loyalty>(
+entry fun new<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
     base_apy: u8,
-    early_withdrawal: bool, // Fixed typo in ealry_withdrawal
-    withdrawal_pending: u32, // Fixed typo in witndrawal_pending
+    early_withdrawal: bool,
+    withdrawal_pending: u32,
     ctx: &mut TxContext,
 ) {
     let admin = AdminCap {
@@ -104,15 +108,16 @@ entry fun initiate<Base, Loyalty>(
 }
 
 /// Deposits base tokens into the pool and receives a receipt
+/// term refers to the number of days needed to pass for valid return value
 public fun deposit<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     coin: Coin<Base>,
     term: u32,
-    clock: &Clock,
     recipient: address,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(pool.version == VERSION, E_WRONG_VERSION);
+    assert!(pool.version == VERSION, EWrongVersion);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
         (term as u64, pool.return_rates.borrow(term))
@@ -136,27 +141,24 @@ public fun deposit<Base, Loyalty>(
 }
 
 /// Withdraws base tokens and claims loyalty tokens if eligible
-entry fun withdrawal<Base, Loyalty>(
+entry fun withdraw<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     receipt: Receipt,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(pool.version == VERSION, E_WRONG_VERSION);
-    assert!(receipt.pool_id == object::id(pool), E_WRONG_POOL);
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(receipt.pool_id == object::id(pool), EWrongPool);
 
     // Check eligible for execute withdrawal
     if (pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
-        assert!(clock.timestamp_ms() > receipt.term, E_NOT_SUPPORT_EARLY_WITHDRAWAL);
+        assert!(clock.timestamp_ms() > receipt.term, ENotSupportEarlyWithdrawal);
     };
 
     if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         if (df::exists_(&pool.id, id(&receipt))) {
             // ensure pending is passed.
-            assert!(
-                *df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(),
-                E_PENDING_WITHDRAWAL,
-            );
+            assert!(*df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(), EPendingWithdrawal);
         } else {
             // add pending and finish the call.
             df::add(
@@ -197,8 +199,8 @@ public fun upsert_lock_term<Base, Loyalty>(
     days: u32,
     apy: u8,
 ) {
-    assert!(pool.admin_cap_id == object::id(admin), E_NOT_ADMIN);
-    assert!(pool.version == VERSION, E_WRONG_VERSION);
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
     // lock_term in ms
     if (pool.return_rates.contains(days)) {
         pool.return_rates.remove(days);
@@ -212,8 +214,8 @@ public fun cancel_pending_withdrawal<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     receipt: &mut Receipt,
 ) {
-    assert!(pool.version == VERSION, E_WRONG_VERSION);
-    assert!(receipt.pool_id == object::id(pool), E_WRONG_POOL);
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(receipt.pool_id == object::id(pool), EWrongPool);
     // lock_term in ms
     df::remove<_, u64>(&mut pool.id, id(receipt));
 }
@@ -224,8 +226,8 @@ public fun delete_lock_term<Base, Loyalty>(
     admin: &mut AdminCap,
     days: u32,
 ) {
-    assert!(pool.admin_cap_id == object::id(admin), E_NOT_ADMIN);
-    assert!(pool.version == VERSION, E_WRONG_VERSION);
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
     // lock_term in ms
     pool.return_rates.remove(days);
 }
@@ -237,8 +239,8 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
     admin: &mut AdminCap,
     ctx: &mut TxContext,
 ) {
-    assert!(pool.admin_cap_id == object::id(admin), E_NOT_ADMIN);
-    assert!(pool.version == VERSION, E_WRONG_VERSION);
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
 
     let (mut policy, policy_cap) = token::new_policy(&pool.treasury_cap, ctx);
 
@@ -256,8 +258,8 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
 
 /// Upgrades the pool to a new version
 entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &AdminCap) {
-    assert!(pool.admin_cap_id == object::id(admin), E_NOT_ADMIN);
-    assert!(pool.version < VERSION, E_NOT_UPGRADE);
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version < VERSION, ENotUpgrade);
     pool.version = VERSION;
 }
 
@@ -282,7 +284,10 @@ fun calculate_token_amount<Base, Loyalty>(
         clock.timestamp_ms() - issue_time
     }.divide_and_round_up(MS_PER_DAY); // <u32
 
-    let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(100); // <u65
-    (eligible_term as u128 * yearly_return).divide_and_round_up(365).try_as_u64().destroy_or!(0) 
+    let yearly_return = (amount as u128 * (apy as u128)).divide_and_round_up(MAX_PCT); // <u65
+    (eligible_term as u128 * yearly_return)
+        .divide_and_round_up(DAY_PER_YEAR)
+        .try_as_u64()
+        .destroy_or!(0)
     // in a conrner case, eligible term * yearly return is larger than u64, so we stop issue token to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
 }

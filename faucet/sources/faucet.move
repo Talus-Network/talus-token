@@ -20,7 +20,8 @@ module faucet::faucet;
 use std::u64::min;
 use sui::balance::{Balance, zero};
 use sui::coin::Coin;
-use sui::object::new;
+
+const MAX_PCT: u64 = 100;
 
 /// Reserve container holding balances of two coin types.
 /// Exchange happens at a fixed rate between coin Target and coin Base.
@@ -35,7 +36,7 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
     target_balance: Balance<Target>,
     base_balance: Balance<Base>,
     exchange_rate: u64,
-    max_withdrawal_pct: u64, // Changed from withdrawal_pct
+    max_withdrawal_pct: u64,
 }
 
 /// Creates a new shared faucet with initial liquidity of coin Target.
@@ -45,15 +46,15 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
 /// * `exchange_rate` - Number of coin Target per coin Base
 /// * `withdrawal_pct` - Maximum withdrawal percentage per transaction (must be < 100)
 /// * `ctx` - Transaction context
-entry fun initiate<Target, Base>(
-    initial_tokens: Coin<Target>, // Changed from initial_token
+entry fun new<Target, Base>(
+    initial_tokens: Coin<Target>,
     exchange_rate: u64,
-    max_withdrawal_pct: u64, // Changed from withdrawal_pct
+    max_withdrawal_pct: u64,
     ctx: &mut TxContext,
 ) {
-    assert!(max_withdrawal_pct < 100, 1);
+    assert!(max_withdrawal_pct < MAX_PCT, 1);
     let faucet = BiFaucet<Target, Base> {
-        id: new(ctx),
+        id: object::new(ctx),
         target_balance: initial_tokens.into_balance(),
         base_balance: zero(),
         exchange_rate,
@@ -141,8 +142,8 @@ public fun refund<Target, Base>(
 /// * `(u64, u64)` - (max coin Target withdrawal, max coin Base withdrawal)
 public(package) fun max_withdrawal<Target, Base>(self: &BiFaucet<Target, Base>): (u64, u64) {
     (
-        (self.target_balance.value() / 100) * self.max_withdrawal_pct,
-        (self.base_balance.value() / 100) * self.max_withdrawal_pct,
+        (self.target_balance.value() / MAX_PCT) * self.max_withdrawal_pct,
+        (self.base_balance.value() / MAX_PCT) * self.max_withdrawal_pct,
     )
 }
 

@@ -6,8 +6,8 @@ use deposit_pool::deposit_pool::{
     AdminCap,
     DepositPool,
     Receipt,
-    E_NOT_SUPPORT_EARLY_WITHDRAWAL,
-    E_PENDING_WITHDRAWAL
+    ENotSupportEarlyWithdrawal,
+    EPendingWithdrawal
 };
 use sui::clock;
 use sui::coin::{Self, create_treasury_cap_for_testing, Coin};
@@ -59,8 +59,8 @@ fun test_deposit_and_withdrawal() {
             &mut pool,
             coin_Base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
@@ -75,7 +75,7 @@ fun test_deposit_and_withdrawal() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -90,7 +90,7 @@ fun test_deposit_and_withdrawal() {
 }
 
 #[test]
-#[expected_failure(abort_code = E_NOT_SUPPORT_EARLY_WITHDRAWAL)]
+#[expected_failure(abort_code = ENotSupportEarlyWithdrawal)]
 fun test_early_withdrawal_not_allowed() {
     let mut scenario = init_deposit_pool(false, 0);
 
@@ -107,8 +107,8 @@ fun test_early_withdrawal_not_allowed() {
             &mut pool,
             coin_Base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
     };
@@ -118,7 +118,7 @@ fun test_early_withdrawal_not_allowed() {
         let receipt = scenario.take_from_sender<Receipt>();
 
         // Should fail - trying to withdraw early
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -180,8 +180,8 @@ fun test_early_withdrawal_allowed() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
     };
@@ -193,7 +193,7 @@ fun test_early_withdrawal_allowed() {
     {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -238,18 +238,18 @@ fun test_withdrawal_with_rewards() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
         // Advance clock past term (60 days)
-        clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY );
+        clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY);
 
         scenario.next_tx(USER);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -319,8 +319,8 @@ fun test_withdrawal_honors_original_apy() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
@@ -352,7 +352,7 @@ fun test_withdrawal_honors_original_apy() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -403,15 +403,15 @@ fun test_withdrawal_pending_with_early_withdrawal() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
         scenario.next_tx(USER);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -420,12 +420,12 @@ fun test_withdrawal_pending_with_early_withdrawal() {
 
         scenario.next_tx(USER);
         // Advance clock past the pending period (38 days)
-        clock.increment_for_testing(Pending_DAY as u64 * MS_PER_DAY );
+        clock.increment_for_testing(Pending_DAY as u64 * MS_PER_DAY);
 
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -447,7 +447,7 @@ fun test_withdrawal_pending_with_early_withdrawal() {
 }
 
 #[test]
-#[expected_failure(abort_code = E_PENDING_WITHDRAWAL)]
+#[expected_failure(abort_code = EPendingWithdrawal)]
 fun test_withdrawal_pending_before_pending_finished() {
     let mut scenario = init_deposit_pool(true, Pending_DAY); // Enable withdrawal pending for Pending_DAY days
 
@@ -464,15 +464,15 @@ fun test_withdrawal_pending_before_pending_finished() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
         scenario.next_tx(USER);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -486,7 +486,7 @@ fun test_withdrawal_pending_before_pending_finished() {
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -501,7 +501,7 @@ fun test_withdrawal_pending_before_pending_finished() {
 }
 
 #[test]
-#[expected_failure(abort_code = E_NOT_SUPPORT_EARLY_WITHDRAWAL)]
+#[expected_failure(abort_code = ENotSupportEarlyWithdrawal)]
 fun test_early_withdrawal_with_pending() {
     let mut scenario = init_deposit_pool(false, Pending_DAY); // Enable withdrawal pending for Pending_DAY days
 
@@ -518,8 +518,8 @@ fun test_early_withdrawal_with_pending() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
@@ -528,7 +528,7 @@ fun test_early_withdrawal_with_pending() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // Attempt to withdraw early
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -561,8 +561,8 @@ fun test_enable_withdrawal_pending_finish_lock_term() {
             &mut pool,
             coin_base,
             Lock_DAY, // 60 days term
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
@@ -577,8 +577,8 @@ fun test_enable_withdrawal_pending_finish_lock_term() {
             &mut pool,
             coin_base,
             Lock_DAY, // 60 days term
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
@@ -587,7 +587,7 @@ fun test_enable_withdrawal_pending_finish_lock_term() {
         clock.increment_for_testing(MS_PER_DAY * (Lock_DAY as u64+1));
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -601,7 +601,7 @@ fun test_enable_withdrawal_pending_finish_lock_term() {
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -647,8 +647,8 @@ fun test_cancel_pending_withdrawal() {
             &mut pool,
             coin_base,
             Lock_DAY,
-            &clock,
             USER,
+            &clock,
             scenario.ctx(),
         );
 
@@ -656,7 +656,7 @@ fun test_cancel_pending_withdrawal() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // Initiate withdrawal, which will go into pending state, but with no token
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -671,7 +671,7 @@ fun test_cancel_pending_withdrawal() {
         deposit_pool::cancel_pending_withdrawal(&mut pool, &mut receipt);
 
         scenario.next_tx(USER);
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -685,7 +685,7 @@ fun test_cancel_pending_withdrawal() {
         clock.increment_for_testing(Pending_DAY as u64 * MS_PER_DAY);
 
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
-        deposit_pool::withdrawal(
+        deposit_pool::withdraw(
             &mut pool,
             receipt,
             &clock,
@@ -718,7 +718,7 @@ fun init_deposit_pool(ealry_withdrawal: bool, pending: u32): Scenario {
     let loyalty_cap = create_treasury_cap_for_testing<Loyalty>(scenario.ctx());
 
     // Initialize pool
-    deposit_pool::initiate<Base, Loyalty>(
+    deposit_pool::new<Base, Loyalty>(
         loyalty_cap,
         Base_APY,
         ealry_withdrawal,

@@ -146,7 +146,7 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
     echo "Faucet contract at: \"$FaucetContractID\""
 
     echo "Initiate faucet"
-    FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function initiate \
+    FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function new \
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args 0x2::sui::SUI \
         --args $TALUS_COIN --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT \
         --json | jq -r '.objectChanges[] | select(.type == "created") |.objectId')
@@ -183,7 +183,7 @@ echo "Loyalty Token Cap at: \"$LoyaltyTreasuryCap\""
 
 # Initialize reward pool
 echo "Init reward pool and Deposit Pool"
-script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function initiate \
+script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function new \
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $LoyaltyTreasuryCap --args $BASE_APY --args false --args 0 \
         --json)
@@ -195,7 +195,7 @@ echo "admin cap at $ADMIN_CAP"
 # Setup Reward Pool
 sleep 3
 echo "initiate reward pool"
-REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_program --function new_reward_pool \
+REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_pool --function new \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --type-args $TOKEN_CONTRACT_ID::us::US  \
         --args $TALUS_COIN --args 1 --json | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
@@ -206,7 +206,7 @@ echo "register reward pool"
 
 # Register reward pool
 PolicyID=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function add_reward_program \
-        --type-args $LoyaltyProgramContractID::reward_program::RewardProgram \
+        --type-args $LoyaltyProgramContractID::reward_pool::RewardProgram \
         --type-args $TOKEN_CONTRACT_ID::us::US \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $DEPOSIT_POOL --args $ADMIN_CAP \
@@ -237,7 +237,7 @@ echo "Policy at $PolicyID"
 #          --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
 #          --args $DEPOSIT_POOL \
 #          --args <us coin id> \
-#          --args 0 --args 0x6 --args $USER --dry-run
+#          --args 0 --args $USER --args 0x6 --dry-run
 
 # echo "Test withdrawal from pool"
 # $SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function withdraw \

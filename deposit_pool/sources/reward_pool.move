@@ -11,9 +11,9 @@ use sui::object::id;
 use sui::token::{Token, spend, add_approval, confirm_request_mut, TokenPolicy};
 
 /// Error code for insufficient pool balance when claiming rewards
-const E_POOL_INSUFFICIENT: u64 = 0;
+const EPoolInsufficient: u64 = 0;
 /// Error when caller is not the admin
-const E_NOT_ADMIN: u64 = 1;
+const ENotAdmin: u64 = 1;
 
 public struct AdminCap has key, store {
     id: UID,
@@ -47,7 +47,7 @@ public struct RewardPool<phantom Loyalty, phantom Reward> has key, store {
 }
 
 /// Creates a new reward pool with an initial balance and rate
-entry fun new_reward_pool<Loyalty, Reward>(coin: Coin<Reward>, rate: u32, ctx: &mut TxContext) {
+entry fun new<Loyalty, Reward>(coin: Coin<Reward>, rate: u32, ctx: &mut TxContext) {
     let admin = AdminCap {
         id: object::new(ctx),
     };
@@ -67,8 +67,7 @@ entry fun reward_fresh<Loyalty, Reward>(
     pool: &mut RewardPool<Loyalty, Reward>,
     coin: Coin<Reward>,
 ) {
-    event::emit(PoolFreshEvent
- {
+    event::emit(PoolFreshEvent {
         pool_id: id(pool),
         amount: coin.value(),
     });
@@ -87,7 +86,7 @@ public fun claim<Loyalty, Reward>(
 ) {
     let claim_amount = token.value().divide_and_round_up(pool.exchange_rate as u64); // Changed from claim
 
-    assert!(claim_amount <= pool.balance.value(), E_POOL_INSUFFICIENT);
+    assert!(claim_amount <= pool.balance.value(), EPoolInsufficient);
 
     let mut req = spend(token, ctx);
     add_approval(RewardProgram {}, &mut req, ctx);
@@ -108,7 +107,7 @@ public fun revoke_pool<Loyalty, Reward>(
     admin_cap: &mut AdminCap,
     ctx: &mut TxContext,
 ) {
-    assert!(pool.admin_cap_id == id(admin_cap), E_NOT_ADMIN);
+    assert!(pool.admin_cap_id == id(admin_cap), ENotAdmin);
 
     let RewardPool { id, balance, .. } = pool;
     id.delete();
@@ -120,7 +119,7 @@ public fun update_rate<Loyalty, Reward>(
     admin_cap: &mut AdminCap,
     new_rate: u32,
 ) {
-    assert!(pool.admin_cap_id == id(admin_cap), E_NOT_ADMIN);
+    assert!(pool.admin_cap_id == id(admin_cap), ENotAdmin);
 
     pool.exchange_rate = new_rate
 }

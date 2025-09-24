@@ -5,10 +5,11 @@ use deposit_pool::reward_pool::{
     Self,
     RewardPool,
     RewardProgram,
-    new_reward_pool,
+    new,
     revoke_pool,
     update_rate,
-    E_NOT_ADMIN,
+    ENotAdmin,
+    EPoolInsufficient,
     AdminCap
 };
 use sui::coin::{Self, TreasuryCap, create_treasury_cap_for_testing, Coin};
@@ -37,7 +38,7 @@ fun init_reward_pool<T>(): (Scenario, TreasuryCap<T>) {
     );
 
     // Create Reward pool
-    new_reward_pool<T, Reward>(
+    new<T, Reward>(
         reward_coin,
         RATE,
         scenario.ctx(),
@@ -143,7 +144,7 @@ fun test_claim_rewards() {
 }
 
 #[test]
-#[expected_failure(abort_code = reward_pool::E_POOL_INSUFFICIENT)]
+#[expected_failure(abort_code = EPoolInsufficient)]
 fun test_claim_insufficient_pool() {
     let (mut scenario, _cap) = init_reward_pool<Loyalty>();
 
@@ -203,7 +204,7 @@ fun test_revoke_with_admin() {
 }
 
 #[test]
-#[expected_failure(abort_code = E_NOT_ADMIN)]
+#[expected_failure(abort_code = ENotAdmin)]
 fun test_revoke_with_wrong_admin() {
     let (mut scenario, _cap) = init_reward_pool<Loyalty>();
 
@@ -212,7 +213,7 @@ fun test_revoke_with_wrong_admin() {
     scenario.next_tx(other);
     {
         let reward_coin2 = coin::mint_for_testing<Reward>(10, scenario.ctx());
-        new_reward_pool<Loyalty, Reward>(reward_coin2, RATE, scenario.ctx());
+        new<Loyalty, Reward>(reward_coin2, RATE, scenario.ctx());
     };
     scenario.next_tx(ADMIN);
     {
