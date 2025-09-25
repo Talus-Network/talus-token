@@ -150,7 +150,8 @@ entry fun withdraw<Base, Loyalty>(
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
 
-    // Check eligible for execute withdrawal
+    // Check eligible for execute withdrawal. Option always exists as this immutable option
+    // was added during pool creation
     if (pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
         assert!(clock.timestamp_ms() >= receipt.mature_at_ms, ENotSupportEarlyWithdrawal);
     };
