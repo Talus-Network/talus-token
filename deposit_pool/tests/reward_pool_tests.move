@@ -2,12 +2,12 @@
 module deposit_pool::test_reward_pool;
 
 use deposit_pool::reward_pool::{
-    Self,
     RewardPool,
     RewardProgram,
     new,
-    revoke_pool,
+    revoke,
     update_rate,
+    refresh,
     ENotAdmin,
     EPoolInsufficient,
     AdminCap
@@ -75,17 +75,16 @@ fun test_create_reward_pool() {
 }
 
 #[test]
-fun test_reward_fresh() {
+fun test_reward_refresh() {
     let (mut scenario, _cap) = init_reward_pool<Loyalty>();
 
     scenario.next_tx(ADMIN);
     {
         let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
-        let fresh_coins = coin::mint_for_testing<Reward>(500, scenario.ctx());
+        let new_coin = coin::mint_for_testing<Reward>(500, scenario.ctx());
 
-        reward_pool::reward_fresh(
-            &mut pool,
-            fresh_coins,
+        pool.refresh(
+            new_coin,
         );
 
         ts::return_shared(pool);
@@ -121,8 +120,7 @@ fun test_claim_rewards() {
 
         let expected_reward = test_mint / (RATE as u64);
 
-        reward_pool::claim(
-            &mut pool,
+        pool.claim(
             loyalty_tokens,
             &mut policy,
             scenario.ctx(),
@@ -161,8 +159,7 @@ fun test_claim_insufficient_pool() {
         );
 
         // This should fail due to insufficient Rewards in pool
-        reward_pool::claim(
-            &mut pool,
+        pool.claim(
             loyalty_tokens,
             &mut policy,
             scenario.ctx(),
@@ -186,8 +183,7 @@ fun test_revoke_with_admin() {
         let pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
         let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
 
-        revoke_pool(
-            pool,
+        pool.revoke(
             &mut admin_cap,
             scenario.ctx(),
         );
@@ -222,8 +218,7 @@ fun test_revoke_with_wrong_admin() {
         let second_pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
         let mut first_admin = scenario.take_from_sender<AdminCap>();
 
-        revoke_pool(
-            second_pool,
+        second_pool.revoke(
             &mut first_admin,
             scenario.ctx(),
         );
@@ -248,8 +243,7 @@ fun test_update_exchange_rate() {
         let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
 
         // Update rate to NEW_RATE
-        update_rate(
-            &mut pool,
+        pool.update_rate(
             &mut admin_cap,
             new_rate,
         );
@@ -279,8 +273,7 @@ fun test_update_exchange_rate() {
 
         let expected_reward = test_mint / (new_rate as u64);
 
-        reward_pool::claim(
-            &mut pool,
+        pool.claim(
             loyalty_tokens,
             &mut policy,
             scenario.ctx(),

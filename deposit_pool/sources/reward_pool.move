@@ -62,17 +62,15 @@ entry fun new<Loyalty, Reward>(coin: Coin<Reward>, rate: u32, ctx: &mut TxContex
     transfer::transfer(admin, ctx.sender());
 }
 
-/// Adds more rewards to the pool and emits an event
-entry fun reward_fresh<Loyalty, Reward>(
-    pool: &mut RewardPool<Loyalty, Reward>,
-    coin: Coin<Reward>,
-) {
+/// Adds an additional coin to the pool reward balance and emits an event
+entry fun refresh<Loyalty, Reward>(pool: &mut RewardPool<Loyalty, Reward>, coin: Coin<Reward>) {
+    pool.balance.join(coin.into_balance());
+
+    // emit event for latest pool balance
     event::emit(PoolRefreshedEvent {
         pool_id: id(pool),
-        amount: coin.value(),
+        amount: pool.balance.value(),
     });
-
-    pool.balance.join(coin.into_balance());
 }
 
 /// Claims rewards by spending loyalty tokens. Transfers reward tokens to the user
@@ -102,7 +100,7 @@ public fun claim<Loyalty, Reward>(
 }
 
 #[allow(lint(self_transfer))]
-public fun revoke_pool<Loyalty, Reward>(
+public fun revoke<Loyalty, Reward>(
     pool: RewardPool<Loyalty, Reward>,
     admin_cap: &mut AdminCap,
     ctx: &mut TxContext,

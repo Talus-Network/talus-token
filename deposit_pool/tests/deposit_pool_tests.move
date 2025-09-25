@@ -55,8 +55,7 @@ fun test_deposit_and_withdraw_success() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let coin_Base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_Base,
             Lock_DAY,
             USER,
@@ -75,8 +74,7 @@ fun test_deposit_and_withdraw_success() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -103,8 +101,7 @@ fun test_early_withdrawal_not_allowed() {
     {
         let coin_Base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_Base,
             Lock_DAY,
             USER,
@@ -118,8 +115,7 @@ fun test_early_withdrawal_not_allowed() {
         let receipt = scenario.take_from_sender<Receipt>();
 
         // Should fail - trying to withdraw early
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -140,15 +136,13 @@ fun test_admin_functions() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
 
-        deposit_pool::upsert_lock_term(
-            &mut pool,
+        pool.upsert_lock_term(
             &mut admin_cap,
             60,
             10, // 10% APY for 60 day term
         );
 
-        deposit_pool::delete_lock_term(
-            &mut pool,
+        pool.delete_lock_term(
             &mut admin_cap,
             60,
         );
@@ -176,8 +170,7 @@ fun test_early_withdrawal_allowed() {
     {
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -193,8 +186,7 @@ fun test_early_withdrawal_allowed() {
     {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -234,8 +226,7 @@ fun test_withdrawal_at_mature() {
     {
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -249,8 +240,7 @@ fun test_withdrawal_at_mature() {
         scenario.next_tx(USER);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -293,55 +283,35 @@ fun test_withdrawal_honors_original_apy() {
 
     let higher_apy = Base_APY * 2; // Double the base APY
 
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
     // First set a higher APY term as admin
-    ts::next_tx(&mut scenario, ADMIN);
-    {
-        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
-        let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
-
-        deposit_pool::upsert_lock_term(
-            &mut pool,
-            &mut admin_cap,
-            Lock_DAY,
-            higher_apy,
-        );
-
-        ts::return_to_address(ADMIN, admin_cap);
-        ts::return_shared(pool);
-    };
+    add_lock_term_for_testing(&mut scenario, &mut pool, Lock_DAY, higher_apy);
 
     // User deposits with the higher APY term
     scenario.next_tx(USER);
     {
-        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
             &clock,
             scenario.ctx(),
         );
-
-        ts::return_shared(pool);
     };
 
     // Admin removes the term
     ts::next_tx(&mut scenario, ADMIN);
     {
-        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
 
-        deposit_pool::delete_lock_term(
-            &mut pool,
+        pool.delete_lock_term(
             &mut admin_cap,
             Lock_DAY,
         );
 
         ts::return_to_address(ADMIN, admin_cap);
-        ts::return_shared(pool);
     };
 
     // Advance clock past term
@@ -350,11 +320,9 @@ fun test_withdrawal_honors_original_apy() {
     // User withdraws - should get rewards based on original higher APY
     scenario.next_tx(USER);
     {
-        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -380,10 +348,10 @@ fun test_withdrawal_honors_original_apy() {
 
         ts::return_to_address(USER, returned_coin);
         ts::return_to_address(USER, loyalty_tokens);
-        ts::return_shared(pool);
     };
 
     clock::destroy_for_testing(clock);
+    ts::return_shared(pool);
     ts::end(scenario);
 }
 
@@ -401,8 +369,7 @@ fun test_early_withdrawl_with_pending_allowed() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -413,8 +380,7 @@ fun test_early_withdrawl_with_pending_allowed() {
         scenario.next_tx(USER);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -427,8 +393,7 @@ fun test_early_withdrawl_with_pending_allowed() {
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -464,8 +429,7 @@ fun test_early_withdrawl_with_pending_allowed_and_withdrawal_after_mature() {
     {
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -479,8 +443,7 @@ fun test_early_withdrawl_with_pending_allowed_and_withdrawal_after_mature() {
         // Advance clock just before mature
         clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY-1);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -493,8 +456,7 @@ fun test_early_withdrawl_with_pending_allowed_and_withdrawal_after_mature() {
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -529,8 +491,7 @@ fun test_withdrawal_before_pending_finished() {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -541,8 +502,7 @@ fun test_withdrawal_before_pending_finished() {
         scenario.next_tx(USER);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -555,8 +515,7 @@ fun test_withdrawal_before_pending_finished() {
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -585,8 +544,7 @@ fun test_early_withdrawal_with_pending_pool_not_allowed() {
     {
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -599,8 +557,7 @@ fun test_early_withdrawal_with_pending_pool_not_allowed() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // Attempt to withdraw early
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -627,8 +584,7 @@ fun test_withdrawal_with_pending_at_mature() {
     {
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY, // 60 days term
             USER,
@@ -641,8 +597,7 @@ fun test_withdrawal_with_pending_at_mature() {
         clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY);
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -655,8 +610,7 @@ fun test_withdrawal_with_pending_at_mature() {
         // need to pick receipt again
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -698,8 +652,7 @@ fun test_cancel_pending_withdrawal() {
     {
         let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
 
-        deposit_pool::deposit(
-            &mut pool,
+        pool.deposit(
             coin_base,
             Lock_DAY,
             USER,
@@ -711,8 +664,7 @@ fun test_cancel_pending_withdrawal() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // Initiate withdrawal, which will go into pending state, but with no token
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -723,11 +675,10 @@ fun test_cancel_pending_withdrawal() {
         clock.increment_for_testing(Lock_DAY as u64*MS_PER_DAY);
 
         let mut receipt = ts::take_from_address<Receipt>(&scenario, USER);
-        deposit_pool::cancel_pending_withdrawal(&mut pool, &mut receipt);
+        pool.cancel_pending_withdrawal(&mut receipt);
 
         scenario.next_tx(USER);
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -740,8 +691,7 @@ fun test_cancel_pending_withdrawal() {
         clock.increment_for_testing(Pending_DAY as u64 * MS_PER_DAY);
 
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
-        deposit_pool::withdraw(
-            &mut pool,
+        pool.withdraw(
             receipt,
             &clock,
             scenario.ctx(),
@@ -796,8 +746,7 @@ fun add_lock_term_for_testing(
 
     let mut admin_cap = ts::take_from_address<AdminCap>(scenario, ADMIN);
 
-    deposit_pool::upsert_lock_term(
-        pool,
+    pool.upsert_lock_term(
         &mut admin_cap,
         lock_days,
         apy,

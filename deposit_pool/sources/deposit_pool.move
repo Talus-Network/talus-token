@@ -33,9 +33,10 @@ const MS_PER_DAY: u64 = 86400000;
 const MAX_PCT: u128 = 100;
 const DAY_PER_YEAR: u128 = 365;
 
-/// Option key for early withdrawal support
+/// Option key for early withdrawal support (bool), requrired.
 const KEY_SUPPORT_EARLY_WITHDRAWAL: u8 = 1;
-/// Option key for withdrawal pending window
+
+/// Option key for withdrawal pending window (days: u32), optional.
 const KEY_WITHDRAWAL_PENDING: u8 = 2;
 
 public struct AdminCap has key, store {
@@ -156,7 +157,9 @@ entry fun withdraw<Base, Loyalty>(
         assert!(clock.timestamp_ms() >= receipt.mature_at_ms, ENotSupportEarlyWithdrawal);
     };
 
+    // Check if withdrawl requirement pending window.
     if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
+        // if pending exists
         if (df::exists_(&pool.id, id(&receipt))) {
             // ensure pending is passed.
             assert!(*df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(), EPendingWithdrawal);
@@ -174,8 +177,7 @@ entry fun withdraw<Base, Loyalty>(
 
     // consume receipt
     let Receipt { id, .., amount, issue_at_ms, mature_at_ms, apy } = receipt;
-    let token_amount = calculate_token_amount(
-        pool,
+    let token_amount = pool.calculate_token_amount(
         clock,
         id.to_inner(),
         amount,
@@ -224,7 +226,9 @@ public fun cancel_pending_withdrawal<Base, Loyalty>(
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
+
     // lock_term in ms
+    // if there is no withdrawal record, just abort.
     df::remove<_, u64>(&mut pool.id, id(receipt));
 }
 
@@ -252,8 +256,7 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
     let (mut policy, policy_cap) = token::new_policy(&pool.treasury_cap, ctx);
 
     // but we constrain spend by this shop:
-    token::add_rule_for_action<Loyalty, Policy>(
-        &mut policy,
+    policy.add_rule_for_action<Loyalty, Policy>(
         &policy_cap,
         token::spend_action(),
         ctx,
