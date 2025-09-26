@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 ###########################################
 # Configuration Variables
 ###########################################
@@ -118,8 +120,8 @@ fi
 
 # Deploy main token contract
 echo "Publishing Token contract:"
-TOKEN_CONTRACT_ID=$($SUI client publish ./talus --json| jq -r ".objectChanges[] | select(.packageId) | .packageId")
-TALUS_COIN=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
+TOKEN_CONTRACT_ID=$($SUI client publish ./talus --json| jq -er ".objectChanges[] | select(.packageId) | .packageId")
+TALUS_COIN=$($SUI client balance --with-coins --json | jq -er '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 sleep 3
 echo "Token Contract at: \"$TOKEN_CONTRACT_ID\""
 echo "Talus coin at : \"$TALUS_COIN\""
@@ -141,7 +143,7 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
     
     # Deploy and initialize faucet
     echo "Publishing Faucet Contract:"
-    FaucetContractID=$($SUI client publish ./faucet --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
+    FaucetContractID=$($SUI client publish ./faucet --json | jq -er ".objectChanges[] | select(.packageId) | .packageId")
     sleep 3
     echo "Faucet contract at: \"$FaucetContractID\""
 
@@ -149,7 +151,7 @@ if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
     FaucetID=$($SUI client call --package $FaucetContractID --module faucet --function new \
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args 0x2::sui::SUI \
         --args $TALUS_COIN --args $EXCHANGE_RATE --args $WITHDRAWAL_PCT \
-        --json | jq -r '.objectChanges[] | select(.type == "created") |.objectId')
+        --json | jq -er '.objectChanges[] | select(.type == "created") |.objectId')
     echo "faucet at: $FaucetID"
 else
     echo "Skipping faucet deployment"
@@ -162,20 +164,20 @@ fi
 # Prepare coins for reward pool
 sleep 3
 echo "Split coin for reward pool"
-TALUS_COIN=$($SUI client balance --with-coins --json | jq -r '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
+TALUS_COIN=$($SUI client balance --with-coins --json | jq -er '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
 RESERVE_SIZE=$(_calculate_amount "($TOTAL_SUPPLY*85/100)-$SPLIT_AMOUNT")
 _spliter=$($SUI client split-coin --coin-id $TALUS_COIN --amounts $RESERVE_SIZE)
 
 # Deploy Loyalty Token Contract
 echo "Deploy Loyalty Token Contract"
 script=$($SUI client publish ./loyalty --json) 
-LoyaltyTokenContractID=$(echo $script | jq -r '.objectChanges[] | select(.packageId) | .packageId')
-LoyaltyTreasuryCap=$(echo $script | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TreasuryCap<"))) | .objectId')
+LoyaltyTokenContractID=$(echo $script | jq -er '.objectChanges[] | select(.packageId) | .packageId')
+LoyaltyTreasuryCap=$(echo $script | jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TreasuryCap<"))) | .objectId')
 
 # Deploy reward pool and Deposit Pool
 sleep 3
 echo "Deploy reward pool and Deposit Pool"
-LoyaltyProgramContractID=$($SUI client publish ./deposit_pool --json | jq -r ".objectChanges[] | select(.packageId) | .packageId")
+LoyaltyProgramContractID=$($SUI client publish ./deposit_pool --json | jq -er ".objectChanges[] | select(.packageId) | .packageId")
 sleep 3
 echo "Loyalty Program Contract at: \"$LoyaltyProgramContractID\""
 echo "Loyalty Token Contract at: \"$LoyaltyTokenContractID\""
@@ -187,8 +189,8 @@ script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_p
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $LoyaltyTreasuryCap --args $BASE_APY --args false --args 0 \
         --json)
-ADMIN_CAP=$(echo $script| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("AdminCap"))) | .objectId')
-DEPOSIT_POOL=$(echo $script| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("DepositPool"))) | .objectId')
+ADMIN_CAP=$(echo $script| jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("AdminCap"))) | .objectId')
+DEPOSIT_POOL=$(echo $script| jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("DepositPool"))) | .objectId')
 echo "Pool at: $DEPOSIT_POOL"
 echo "admin cap at $ADMIN_CAP"
 
@@ -198,7 +200,7 @@ echo "initiate reward pool"
 REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_pool --function new \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --type-args $TOKEN_CONTRACT_ID::us::US  \
-        --args $TALUS_COIN --args 1 --json | jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
+        --args $TALUS_COIN --args 1 --json | jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
 
 sleep 3
 echo "reward pool at $REWARD_POOL"
@@ -210,7 +212,7 @@ PolicyID=$($SUI client call --package $LoyaltyProgramContractID --module deposit
         --type-args $TOKEN_CONTRACT_ID::us::US \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $DEPOSIT_POOL --args $ADMIN_CAP \
-        --gas-budget 30000000 --json| jq -r '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TokenPolicy"))) | .objectId' )
+        --gas-budget 30000000 --json| jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("TokenPolicy"))) | .objectId' )
         
 echo "Policy at $PolicyID"
 
