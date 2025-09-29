@@ -1,5 +1,5 @@
 [package]
-name = "faucet"
+name = "deposit_pool"
 edition = "2024.beta" 
 authors = ["Talus Labs <hi@taluslabs.xyz>"]
 
@@ -7,4 +7,4 @@ authors = ["Talus Labs <hi@taluslabs.xyz>"]
 Talus = {local = "../talus"}
 
 [addresses]
-faucet = "0x0"
+deposit_pool = "0x0"

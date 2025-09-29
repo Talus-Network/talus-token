@@ -2,9 +2,9 @@
 module faucet::faucet_tests;
 
 use faucet::faucet::{Self, BiFaucet};
+use std::unit_test::assert_eq;
 use sui::coin::mint_for_testing;
 use sui::test_scenario::{Self as ts, ctx};
-use sui::test_utils::assert_eq;
 
 // Test coin types
 public struct USDC {}
@@ -22,17 +22,17 @@ fun test_initiate() {
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
 
     // Initialize faucet
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
 
     // Verify faucet exists and has correct initial balance
     scenario.next_tx(owner);
     {
         let faucet = ts::take_shared<BiFaucet<USDC, ETH>>(&scenario);
         let (balance_target, balance_base, rate, ratio) = faucet.get_balance_for_testing();
-        assert_eq(balance_target, init);
-        assert_eq(balance_base, 0);
-        assert_eq(rate, rate);
-        assert_eq(ratio, withdrawal_pct);
+        assert_eq!(balance_target, init);
+        assert_eq!(balance_base, 0);
+        assert_eq!(rate, rate);
+        assert_eq!(ratio, withdrawal_pct);
         ts::return_shared(faucet);
     };
 
@@ -51,7 +51,7 @@ fun test_inject() {
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
 
     // Initialize faucet
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
 
     // Verify faucet exists and has correct initial balance
     scenario.next_tx(owner);
@@ -64,10 +64,10 @@ fun test_inject() {
         faucet.inject(inject_coin);
 
         let (balance_target, balance_base, rate, ratio) = faucet.get_balance_for_testing();
-        assert_eq(balance_target, init*2);
-        assert_eq(balance_base, 0);
-        assert_eq(rate, rate);
-        assert_eq(ratio, withdrawal_pct);
+        assert_eq!(balance_target, init*2);
+        assert_eq!(balance_base, 0);
+        assert_eq!(rate, rate);
+        assert_eq!(ratio, withdrawal_pct);
         ts::return_shared(faucet);
     };
 
@@ -86,7 +86,7 @@ fun test_over_pct() {
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
 
     // Initialize faucet
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
     ts::end(scenario);
 }
 
@@ -103,7 +103,7 @@ fun test_max_mintable() {
         let initial_usdc = mint_for_testing<USDC>(init_target, scenario.ctx());
 
         // Initialize faucet
-        faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+        faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
         scenario.next_tx(owner);
         let mut faucet = ts::take_shared<BiFaucet<USDC, ETH>>(&scenario);
         let eth_coin = mint_for_testing<ETH>(max_base, scenario.ctx());
@@ -116,8 +116,8 @@ fun test_max_mintable() {
             let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
             let (max_mint, max_withdrawal) = faucet.max_withdrawal();
 
-            assert_eq(balance_target*withdrawal_pct/100, max_mint);
-            assert_eq(balance_base*withdrawal_pct/100, max_withdrawal);
+            assert_eq!(balance_target*withdrawal_pct/100, max_mint);
+            assert_eq!(balance_base*withdrawal_pct/100, max_withdrawal);
         };
 
         ts::return_shared(faucet);
@@ -138,7 +138,7 @@ fun test_over_mint() {
 
     // Setup faucet with initial USDC
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
 
     // User mints with ETH
     ts::next_tx(&mut scenario, user);
@@ -155,8 +155,8 @@ fun test_over_mint() {
 
         // should mint max_mint
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
-        assert_eq(balance_target, init-max_mint);
-        assert_eq(balance_base, max_mint/rate);
+        assert_eq!(balance_target, init-max_mint);
+        assert_eq!(balance_base, max_mint/rate);
         ts::return_shared(faucet);
     };
     ts::end(scenario);
@@ -173,7 +173,7 @@ fun test_mint() {
 
     // Setup faucet with initial USDC
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
 
     // User mints with ETH
     ts::next_tx(&mut scenario, user);
@@ -186,8 +186,8 @@ fun test_mint() {
 
         faucet::mint<USDC, ETH>(&mut faucet, eth_coin, scenario.ctx());
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
-        assert_eq(balance_target, init - max_mint);
-        assert_eq(balance_base, max_mint/rate);
+        assert_eq!(balance_target, init - max_mint);
+        assert_eq!(balance_base, max_mint/rate);
 
         ts::return_shared(faucet);
     };
@@ -207,7 +207,7 @@ fun test_over_refund() {
 
     // Setup faucet with initial USDC and ETH
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
 
     ts::next_tx(&mut scenario, user);
     {
@@ -223,8 +223,8 @@ fun test_over_refund() {
 
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
         // Verify balances
-        assert_eq(balance_target, init-(mint-max_refund)*rate); // 1000 + 200
-        assert_eq(balance_base, mint-max_refund); // 100 - 100
+        assert_eq!(balance_target, init-(mint-max_refund)*rate); // 1000 + 200
+        assert_eq!(balance_base, mint-max_refund); // 100 - 100
 
         ts::return_shared(faucet);
     };
@@ -245,7 +245,7 @@ fun test_refund() {
 
     // Setup faucet with initial USDC and ETH
     let initial_usdc = mint_for_testing<USDC>(init, scenario.ctx());
-    faucet::initiate<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
+    faucet::new<USDC, ETH>(initial_usdc, rate, withdrawal_pct, scenario.ctx());
 
     ts::next_tx(&mut scenario, user);
     {
@@ -259,8 +259,8 @@ fun test_refund() {
 
         let (balance_target, balance_base, _, _) = faucet.get_balance_for_testing();
         // Verify balances
-        assert_eq(balance_target, init-rate*(mint-max_refund)); // 1000 + 200
-        assert_eq(balance_base, mint-max_refund); // 100 - 100
+        assert_eq!(balance_target, init-rate*(mint-max_refund)); // 1000 + 200
+        assert_eq!(balance_base, mint-max_refund); // 100 - 100
 
         ts::return_shared(faucet);
     };

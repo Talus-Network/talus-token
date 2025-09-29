@@ -1,6 +1,6 @@
 # Talus Token Project
 
-This repository contains the smart contracts for the Talus Token project on Sui blockchain, featuring a custom token and a decentralized faucet for token distribution.
+This repository contains the smart contracts for the Talus Token project on Sui blockchain, featuring a custom token, a decentralized faucet for token distribution, a deposit pool for yield generation, and a reward pool for loyalty incentives.
 
 ## Prerequisites
 
@@ -13,8 +13,10 @@ This repository contains the smart contracts for the Talus Token project on Sui 
 
 ```
 talus-token/
-├── talus/             # Talus token implementation
+├── talus/             # US token (Coin) 
 ├── faucet/            # Bi-directional faucet contract
+├── loyalty/           # Loyalty token
+├── deposit_pool/      # Deposit pool and reward pool contracts
 └── deploy.sh          # Deployment script
 ```
 
@@ -26,18 +28,66 @@ A custom token implementation on the Sui blockchain.
 ### Faucet Module
 The faucet module implements a faucet that enables exchanging between target token (e.g. TALUS) and base token (e.g. SUI) at a configurable exchange rate. Key features include:
 
-- Configurable exchange rate between two token for test net so the Sybil attack resistance is based on supply of base token
+- Configurable exchange rate between two tokens for test net so the Sybil attack resistance is based on supply of base token
 - Percentage-based withdrawal limits to prevent draining
 - Ability to inject additional liquidity
 - Simple interface for minting and refunding
+
+### Deposit Pool Module
+
+The deposit pool module allows users to deposit base tokens and earn loyalty tokens as rewards. Users can lock their tokens for different time periods with varying APY rates. Key features include:
+
+- Multiple lock terms with configurable APY
+- Early withdrawal support (configurable)
+- Pending withdrawal period (optional)
+- Admin-controlled reward pool integration
+- Receipts for each deposit, enabling precise reward calculation
+
+#### Usage
+
+```move
+// Initialize a deposit pool
+let treasury_cap = // ... obtain Loyalty token treasury cap
+let base_apy = 5; // 5% APY
+let early_withdrawal = true;
+let withdrawal_pending_days = 2;
+deposit_pool::deposit_pool::initiate<Base, Loyalty>(
+    treasury_cap, base_apy, early_withdrawal, withdrawal_pending_days, ctx
+);
+
+// Deposit base tokens
+deposit_pool::deposit_pool::deposit(pool, base_coin, term_days, clock, recipient, ctx);
+
+// Withdraw and claim rewards
+deposit_pool::deposit_pool::withdrawal(pool, receipt, clock, ctx);
+```
+
+### Reward Pool Module
+
+The reward pool module manages reward pools and allows users to claim rewards by spending loyalty tokens. Pools can be refreshed with more rewards, and events are emitted for transparency.
+
+#### Usage
+
+```move
+// Create a new reward pool
+let reward_coin = // ... obtain reward tokens
+let rate = 10; // 10 Loyalty tokens per reward token
+deposit_pool::reward_program::new_reward_pool<Loyalty, Reward>(reward_coin, rate, ctx);
+
+// Add more rewards to the pool
+deposit_pool::reward_program::reward_fresh(pool, additional_reward_coin);
+
+// Claim rewards by spending loyalty tokens
+deposit_pool::reward_program::claim(pool, loyalty_token, policy, ctx);
+```
 
 ## Deployment
 
 The project includes an automated deployment script that:
 1. Starts a local Sui node if remote rpc is not provided
 2. Sets up the environment
-3. Publishes both contracts
-4. Initializes the faucet with initial liquidity
+3. Publishes all contracts
+4. Initializes the faucet and deposit pool with initial liquidity
 
 To deploy:
 ```bash
@@ -79,16 +129,17 @@ faucet::refund(faucet, talus_coin, ctx);
 faucet::inject(faucet, additional_talus, ctx);
 ```
 
-### Security Features
+## Security Features
 
-The faucet includes several security measures:
+The contracts include several security measures:
 - Withdrawal limits (configurable percentage) prevent large withdrawals
 - Fixed exchange rates prevent manipulation
 - Shared object model ensures equal access
 - Idempotent deployment process
 - Retry mechanisms for faucet operations
+- Admin controls for deposit pool and reward pool configuration
 
-### Configuration
+## Configuration
 
 Default values in deployment:
 - Total Supply: 10^19 tokens

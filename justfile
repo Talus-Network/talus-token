@@ -10,6 +10,8 @@ clean-pkg PACKAGE:
 clean:
     @just clean-pkg talus
     @just clean-pkg faucet
+    @just clean-pkg deposit_pool
+    @just clean-pkg loyalty
 
 # Helper: Build a specific package
 build-pkg PACKAGE:
@@ -19,6 +21,8 @@ build-pkg PACKAGE:
 build:
     @just build-pkg talus
     @just build-pkg faucet
+    @just build-pkg deposit_pool
+    @just build-pkg loyalty
 
 # Helper: Test a specific package
 test-pkg PACKAGE:
@@ -27,7 +31,10 @@ test-pkg PACKAGE:
 # Test both packages
 test:
     @just test-pkg talus
-    @just test-pkg faucet
+    @just test-pkg faucet    
+    @just test-pkg deposit_pool
+    @just test-pkg loyalty
+
 
 # Helper: Test with coverage for a specific package
 test-cov-pkg PACKAGE:
@@ -37,16 +44,20 @@ test-cov-pkg PACKAGE:
 test-cov:
     @just test-cov-pkg talus
     @just test-cov-pkg faucet
+    @just test-cov-pkg loyalty
+    @just test-cov-pkg deposit_pool
 
 # Build and test with report to console
 build-test-report PACKAGE:
-    @just build
-    @just test-cov
+    @just build-pkg {{PACKAGE}}
+    @just test-cov-pkg {{PACKAGE}}
     cd ./{{PACKAGE}} && sui move coverage summary
 
 test-report:
     @just build-test-report talus
     @just build-test-report faucet
+    @just build-test-report loyalty
+    @just build-test-report deposit_pool
 
 # Build and test in one command
 build-test: build test

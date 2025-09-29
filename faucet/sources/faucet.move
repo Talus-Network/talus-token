@@ -20,7 +20,8 @@ module faucet::faucet;
 use std::u64::min;
 use sui::balance::{Balance, zero};
 use sui::coin::Coin;
-use sui::object::new;
+
+const MAX_PCT: u64 = 100;
 
 /// Reserve container holding balances of two coin types.
 /// Exchange happens at a fixed rate between coin Target and coin Base.
@@ -35,7 +36,7 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
     target_balance: Balance<Target>,
     base_balance: Balance<Base>,
     exchange_rate: u64,
-    withdrawal_pct: u64,
+    max_withdrawal_pct: u64,
 }
 
 /// Creates a new shared faucet with initial liquidity of coin Target.
@@ -45,19 +46,19 @@ public struct BiFaucet<phantom Target, phantom Base> has key, store {
 /// * `exchange_rate` - Number of coin Target per coin Base
 /// * `withdrawal_pct` - Maximum withdrawal percentage per transaction (must be < 100)
 /// * `ctx` - Transaction context
-public entry fun initiate<Target, Base>(
-    initial_token: Coin<Target>,
+entry fun new<Target, Base>(
+    initial_tokens: Coin<Target>,
     exchange_rate: u64,
-    withdrawal_pct: u64,
+    max_withdrawal_pct: u64,
     ctx: &mut TxContext,
 ) {
-    assert!(withdrawal_pct < 100, 1);
+    assert!(max_withdrawal_pct < MAX_PCT, 1);
     let faucet = BiFaucet<Target, Base> {
-        id: new(ctx),
-        target_balance: initial_token.into_balance(),
+        id: object::new(ctx),
+        target_balance: initial_tokens.into_balance(),
         base_balance: zero(),
-        exchange_rate: exchange_rate,
-        withdrawal_pct: withdrawal_pct,
+        exchange_rate,
+        max_withdrawal_pct,
     };
     // Make the faucet shared so anyone can call donate/swap.
     transfer::share_object(faucet);
@@ -68,10 +69,7 @@ public entry fun initiate<Target, Base>(
 /// # Parameters
 /// * `faucet` - Faucet to inject coins into
 /// * `target_coin` - Coin Target to add to reserves
-public entry fun inject<Target, Base>(
-    faucet: &mut BiFaucet<Target, Base>,
-    target_coin: Coin<Target>,
-) {
+public fun inject<Target, Base>(faucet: &mut BiFaucet<Target, Base>, target_coin: Coin<Target>) {
     faucet.target_balance.join(target_coin.into_balance());
 }
 
@@ -82,7 +80,8 @@ public entry fun inject<Target, Base>(
 /// * `self` - Faucet to mint from
 /// * `base_coin` - Coin Base to exchange
 /// * `ctx` - Transaction context
-public entry fun mint<Target, Base>(
+#[allow(lint(self_transfer))]
+public fun mint<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
     mut base_coin: Coin<Base>,
     ctx: &mut TxContext,
@@ -102,7 +101,7 @@ public entry fun mint<Target, Base>(
     transfer::public_transfer(
         self.target_balance.split(collateral*self.exchange_rate).into_coin(ctx),
         ctx.sender(),
-    )
+    );
 }
 
 /// Refunds coin Base in exchange for returning coin Target at the fixed exchange rate.
@@ -112,7 +111,8 @@ public entry fun mint<Target, Base>(
 /// * `self` - Faucet to refund from
 /// * `target_coin` - Coin Target to return
 /// * `ctx` - Transaction context
-public entry fun refund<Target, Base>(
+#[allow(lint(self_transfer))]
+public fun refund<Target, Base>(
     self: &mut BiFaucet<Target, Base>,
     mut target_coin: Coin<Target>,
     ctx: &mut TxContext,
@@ -142,8 +142,8 @@ public entry fun refund<Target, Base>(
 /// * `(u64, u64)` - (max coin Target withdrawal, max coin Base withdrawal)
 public(package) fun max_withdrawal<Target, Base>(self: &BiFaucet<Target, Base>): (u64, u64) {
     (
-        (self.target_balance.value() / 100) * self.withdrawal_pct,
-        (self.base_balance.value() / 100) * self.withdrawal_pct,
+        (self.target_balance.value() / MAX_PCT) * self.max_withdrawal_pct,
+        (self.base_balance.value() / MAX_PCT) * self.max_withdrawal_pct,
     )
 }
 
@@ -159,6 +159,6 @@ public fun get_balance_for_testing<Target, Base>(
         self.target_balance.value(),
         self.base_balance.value(),
         self.exchange_rate,
-        self.withdrawal_pct,
+        self.max_withdrawal_pct,
     )
 }
