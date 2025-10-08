@@ -6,9 +6,10 @@ set -euo pipefail
 # Configuration Variables
 ###########################################
 SUI="sui"
-TOTAL_SUPPLY="10^19"  # Changed from TOTAL_AMOUNT
-INITIAL_SPLIT_AMOUNT=0  # Changed from SPLIT_AMOUNT
+TOTAL_SUPPLY="10^19"
+INITIAL_SPLIT_AMOUNT=0 
 BASE_APY=2
+APY_DECIMAL="2" # an Option<u8> value, "2" means 1%, "3" means 0.1%, "4" means 0.01%, etc
 
 ###########################################
 # Helper Functions
@@ -187,7 +188,7 @@ echo "Loyalty Token Cap at: \"$LoyaltyTreasuryCap\""
 echo "Init reward pool and Deposit Pool"
 script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function new \
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
-        --args $LoyaltyTreasuryCap --args $BASE_APY --args false --args 0 \
+        --args $LoyaltyTreasuryCap --args $BASE_APY --args [] --args false --args 0 \
         --json)
 ADMIN_CAP=$(echo $script| jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("AdminCap"))) | .objectId')
 DEPOSIT_POOL=$(echo $script| jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("DepositPool"))) | .objectId')
@@ -200,7 +201,7 @@ echo "initiate reward pool"
 REWARD_POOL=$($SUI client call --package $LoyaltyProgramContractID --module reward_pool --function new \
         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --type-args $TOKEN_CONTRACT_ID::us::US  \
-        --args $TALUS_COIN --args 1 --json | jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
+        --args $TALUS_COIN --args 1 --args 1 --json | jq -er '.objectChanges[] | select(.objectType!= null and(.objectType | contains("RewardPool"))) | .objectId')
 
 sleep 3
 echo "reward pool at $REWARD_POOL"
@@ -222,34 +223,35 @@ echo "Policy at $PolicyID"
 
 # Test mint
 # $SUI client call --package $FaucetContractID --module faucet --function mint \
-#         --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
-#         --args $FaucetID --args 0x2aecc575afe2859ddd56710c70f9c76845efbb3b4721f30438b60a815814b752 \
+#         --type-args $TOKEN_CONTRACT_ID::us::US --type-args 0x2::sui::SUI \
+#         --args $FaucetID --args <sui coin>\
 #         --dry-run
 
 # echo "test refund"
 # $SUI client call --package $FaucetContractID --module faucet --function refund \
-#         --type-args $TokenContractID::us::US --type-args 0x2::sui::SUI \
-#         --args $FaucetID --args <talus coin id> \
+#         --type-args $TOKEN_CONTRACT_ID::us::US --type-args 0x2::sui::SUI \
+#         --args $FaucetID --args <us coin> \
 #         --dry-run
 
 # echo "Test deposit to pool"
 #  $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
 #          --function deposit \
-#          --type-args $TokenContractID::us::US \
+#          --type-args $TOKEN_CONTRACT_ID::us::US \
 #          --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
 #          --args $DEPOSIT_POOL \
-#          --args <us coin id> \
-#          --args 0 --args $USER --args 0x6 --dry-run
+#          --args <us coin> \
+#          --args 0 --args $USER \
+#          --args [] --args 0x6 --dry-run
 
 # echo "Test withdrawal from pool"
 # $SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function withdraw \
-#         --type-args $TokenContractID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
-#         --args $DEPOSIT_POOL --args <receipt_nft_id> \
-#         --gas-budget 10000000
+#         --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args <receipt id>\
+#         --args 0x6 --gas-budget 10000000
 
 # echo "Test claim reward"
 # $SUI client call --package $LoyaltyProgramContractID --module reward_program \
 #         --function claim \
 #         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \ 
-#         --type-args $TokenContractID::us::US 
-#         --args $DEPOSIT_POOL --args <token id> --args $PolicyID \
+#         --type-args $TOKEN_CONTRACT_ID::us::US 
+#         --args $DEPOSIT_POOL --args <token id> --args $PolicyID --args [] \

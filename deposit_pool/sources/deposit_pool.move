@@ -77,7 +77,7 @@ public struct Receipt has key {
     issue_at_ms: u64,
     /// Timestamp when lock period ends
     mature_at_ms: u64,
-    /// APY rate for this deposit with immutable unit stored in the pool
+    /// a shifted apy, need to be divided by 10**`pool.rate_decimal`
     apy: u16,
 }
 
@@ -311,5 +311,5 @@ fun calculate_token_amount<Base, Loyalty>(
 
     let yearly_return = (amount as u128 * (apy as u128))/(10_u128.pow(pool.rate_decimal)); // <u80
     ((eligible_term as u128 * yearly_return)/DAY_PER_YEAR).try_as_u64().destroy_or!(0)
-    // in a conrner case, eligible term * yearly return is larger than u64, so we stop issue tokens to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
+    // in a corner case, eligible term * yearly return is larger than u64, so we stop issue tokens to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
 }
