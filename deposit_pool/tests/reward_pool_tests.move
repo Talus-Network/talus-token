@@ -6,12 +6,16 @@ use deposit_pool::reward_pool::{
     RewardProgram,
     new,
     revoke,
-    update_rate,
+    update_exchange_rate,
     refresh,
     ENotAdmin,
     EPoolInsufficient,
-    AdminCap
+    EInvalidExchangeRate,
+    ERewardNotAsExpected,
+    AdminCap,
+    new_safe_exchange_rate
 };
+use std::option::{none, some};
 use sui::coin::{Self, TreasuryCap, create_treasury_cap_for_testing, Coin};
 use sui::test_scenario::{Self as ts, Scenario};
 use sui::token::{Self, TokenPolicy, Token};
@@ -23,7 +27,9 @@ public struct Reward has drop {}
 const ADMIN: address = @0xAD;
 const USER: address = @0xB0B;
 const INITIAL_SUPPLY: u64 = 1000000;
-const RATE: u32 = 10; // 10 Loyalty = 1 Reward
+// 10 Loyalty = 1 Reward
+const LOYALTY_RER_UNIT: u64 = 10;
+const REWARD_PER_UNIT: u64 = 1;
 
 fun init_reward_pool<T>(): (Scenario, TreasuryCap<T>) {
     let mut scenario = ts::begin(ADMIN);
@@ -40,7 +46,8 @@ fun init_reward_pool<T>(): (Scenario, TreasuryCap<T>) {
     // Create Reward pool
     new<T, Reward>(
         reward_coin,
-        RATE,
+        LOYALTY_RER_UNIT,
+        REWARD_PER_UNIT,
         scenario.ctx(),
     );
 
@@ -118,11 +125,17 @@ fun test_claim_rewards() {
         let mut policy = ts::take_shared<TokenPolicy<Loyalty>>(&scenario);
         let loyalty_tokens = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
 
-        let expected_reward = test_mint / (RATE as u64);
+        let expected_reward = new_safe_exchange_rate(
+            LOYALTY_RER_UNIT,
+            REWARD_PER_UNIT,
+        ).exchange_amount(
+            test_mint,
+        );
 
         pool.claim(
             loyalty_tokens,
             &mut policy,
+            none(),
             scenario.ctx(),
         );
 
@@ -154,7 +167,7 @@ fun test_claim_insufficient_pool() {
 
         // force to try claim more than supply
         let loyalty_tokens = token::mint_for_testing(
-            RATE as u64 + INITIAL_SUPPLY * (RATE as u64),
+            LOYALTY_RER_UNIT*(1+ INITIAL_SUPPLY/REWARD_PER_UNIT),
             scenario.ctx(),
         );
 
@@ -162,6 +175,7 @@ fun test_claim_insufficient_pool() {
         pool.claim(
             loyalty_tokens,
             &mut policy,
+            none(),
             scenario.ctx(),
         );
 
@@ -211,7 +225,7 @@ fun test_revoke_with_wrong_admin() {
     scenario.next_tx(other);
     {
         let reward_coin2 = coin::mint_for_testing<Reward>(10, scenario.ctx());
-        new<Loyalty, Reward>(reward_coin2, RATE, scenario.ctx());
+        new<Loyalty, Reward>(reward_coin2, LOYALTY_RER_UNIT, REWARD_PER_UNIT, scenario.ctx());
     };
     scenario.next_tx(ADMIN);
     {
@@ -232,8 +246,9 @@ fun test_revoke_with_wrong_admin() {
 
 #[test]
 fun test_update_exchange_rate() {
-    let new_rate: u32 = 20; // new exchange rate for tests
-
+    // reverse the rate
+    let new_loyalty_rate = REWARD_PER_UNIT;
+    let new_reward_rate = LOYALTY_RER_UNIT;
     let (mut scenario, mut loyalty_cap) = init_reward_pool<Loyalty>();
 
     // Admin updates the exchange rate
@@ -243,9 +258,10 @@ fun test_update_exchange_rate() {
         let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
 
         // Update rate to NEW_RATE
-        pool.update_rate(
+        pool.update_exchange_rate(
             &mut admin_cap,
-            new_rate,
+            new_loyalty_rate,
+            new_reward_rate,
         );
 
         ts::return_shared(pool);
@@ -271,11 +287,12 @@ fun test_update_exchange_rate() {
         let mut policy = ts::take_shared<TokenPolicy<Loyalty>>(&scenario);
         let loyalty_tokens = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
 
-        let expected_reward = test_mint / (new_rate as u64);
+        let expected_reward = (new_reward_rate*test_mint)/new_loyalty_rate;
 
         pool.claim(
             loyalty_tokens,
             &mut policy,
+            none(),
             scenario.ctx(),
         );
 
@@ -289,5 +306,192 @@ fun test_update_exchange_rate() {
         ts::return_shared(pool);
     };
     transfer::public_freeze_object(loyalty_cap);
+    ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidExchangeRate)]
+fun test_initiate_with_zero_reward_rate() {
+    let mut scenario = ts::begin(ADMIN);
+    // Create Reward tokens
+
+    // Create Reward pool
+    new<Loyalty, Reward>(
+        coin::mint_for_testing<Reward>(
+            INITIAL_SUPPLY,
+            scenario.ctx(),
+        ),
+        0,
+        REWARD_PER_UNIT,
+        scenario.ctx(),
+    );
+
+    ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidExchangeRate)]
+fun test_initiate_with_zero_loyalty_rate() {
+    let mut scenario = ts::begin(ADMIN);
+    // Create Reward tokens
+
+    // Create Reward pool
+    new<Loyalty, Reward>(
+        coin::mint_for_testing<Reward>(
+            INITIAL_SUPPLY,
+            scenario.ctx(),
+        ),
+        0,
+        REWARD_PER_UNIT,
+        scenario.ctx(),
+    );
+
+    ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidExchangeRate)]
+fun test_update_zero_loyalty_rate() {
+    let (mut scenario, loyalty_cap) = init_reward_pool<Loyalty>();
+
+    // Admin updates the exchange rate
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
+        let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+
+        // Update rate to NEW_RATE
+        pool.update_exchange_rate(
+            &mut admin_cap,
+            0,
+            REWARD_PER_UNIT,
+        );
+        ts::return_shared(pool);
+        ts::return_to_address(ADMIN, admin_cap);
+    };
+
+    transfer::public_freeze_object(loyalty_cap);
+    ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidExchangeRate)]
+fun test_update_zero_reward_rate() {
+    let (mut scenario, loyalty_cap) = init_reward_pool<Loyalty>();
+
+    // Admin updates the exchange rate
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
+        let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+
+        // Update rate to NEW_RATE
+        pool.update_exchange_rate(
+            &mut admin_cap,
+            LOYALTY_RER_UNIT,
+            0,
+        );
+        ts::return_shared(pool);
+        ts::return_to_address(ADMIN, admin_cap);
+    };
+
+    transfer::public_freeze_object(loyalty_cap);
+    ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = ERewardNotAsExpected)]
+fun test_claim_with_over_expectation() {
+    let (mut scenario, _cap) = init_reward_pool<Loyalty>();
+
+    // Try to claim more than available
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
+        let mut policy = ts::take_shared<TokenPolicy<Loyalty>>(&scenario);
+
+        // should return REWARD RATE
+        let loyalty_tokens = token::mint_for_testing(
+            LOYALTY_RER_UNIT,
+            scenario.ctx(),
+        );
+
+        // This should fail due to insufficient Rewards in pool
+        pool.claim(
+            loyalty_tokens,
+            &mut policy,
+            some(REWARD_PER_UNIT +1),
+            scenario.ctx(),
+        );
+
+        ts::return_shared(policy);
+        ts::return_shared(pool);
+    };
+
+    transfer::public_freeze_object(_cap);
+    ts::end(scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = ERewardNotAsExpected)]
+fun test_claim_with_dust() {
+    let (mut scenario, _cap) = init_reward_pool<Loyalty>();
+
+    // Try to claim more than available
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
+        let mut policy = ts::take_shared<TokenPolicy<Loyalty>>(&scenario);
+
+        // insufficient for return
+        let loyalty_tokens = token::mint_for_testing(
+            LOYALTY_RER_UNIT-1,
+            scenario.ctx(),
+        );
+
+        // This should fail due to insufficient Rewards in pool
+        pool.claim(
+            loyalty_tokens,
+            &mut policy,
+            none(),
+            scenario.ctx(),
+        );
+
+        ts::return_shared(policy);
+        ts::return_shared(pool);
+    };
+
+    transfer::public_freeze_object(_cap);
+    ts::end(scenario);
+}
+#[test]
+fun test_explicitly_claim_with_dust() {
+    let (mut scenario, _cap) = init_reward_pool<Loyalty>();
+
+    // Try to claim more than available
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<RewardPool<Loyalty, Reward>>(&scenario);
+        let mut policy = ts::take_shared<TokenPolicy<Loyalty>>(&scenario);
+
+        // insufficient for return
+        let loyalty_tokens = token::mint_for_testing(
+            LOYALTY_RER_UNIT-1,
+            scenario.ctx(),
+        );
+
+        // This should fail due to insufficient Rewards in pool
+        pool.claim(
+            loyalty_tokens,
+            &mut policy,
+            some(0),
+            scenario.ctx(),
+        );
+
+        ts::return_shared(policy);
+        ts::return_shared(pool);
+    };
+
+    transfer::public_freeze_object(_cap);
     ts::end(scenario);
 }
