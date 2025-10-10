@@ -2,6 +2,7 @@
 /// Users can lock their tokens for different time periods with varying APY rates.
 module deposit_pool::deposit_pool;
 
+use std::u128::pow;
 use sui::bag::{Self, Bag};
 use sui::balance::{zero, Balance};
 use sui::clock::Clock;
@@ -24,13 +25,16 @@ const EWrongPool: u64 = 3;
 const ENotSupportEarlyWithdrawal: u64 = 4;
 /// Error when withdrawal is still in pending state
 const EPendingWithdrawal: u64 = 5;
+/// Error when admin mistakenly removed the default term;
+const ERemovingDefaultTerm: u64 = 6;
+/// Error when user choose a term with apy less than expectation;
+const EApyMismatched: u64 = 7;
 
 // ====================== Const =================
 /// Current version of the contract
 const VERSION: u64 = 1;
 /// Milliseconds in one day (<2^27)
 const MS_PER_DAY: u64 = 86400000;
-const MAX_PCT: u128 = 100;
 const DAY_PER_YEAR: u128 = 365;
 
 /// Option key for early withdrawal support (bool), requrired.
@@ -50,8 +54,10 @@ public struct DepositPool<phantom Base, phantom Loyalty> has key {
     balance: Balance<Base>,
     /// Treasury capability for minting loyalty tokens
     treasury_cap: TreasuryCap<Loyalty>,
+    // immutable unit of return rate, apy:= rate/(10**decimal)
+    rate_decimal: u8,
     /// Mapping of lock periods to APY rates
-    return_rates: Table<u32, u8>,
+    return_rates: Table<u32, u16>,
     /// ID of the admin capability
     admin_cap_id: ID,
     /// Contract version
@@ -71,14 +77,15 @@ public struct Receipt has key {
     issue_at_ms: u64,
     /// Timestamp when lock period ends
     mature_at_ms: u64,
-    /// APY rate for this deposit
-    apy: u8,
+    /// a shifted apy, need to be divided by 10**`pool.rate_decimal`
+    apy: u16,
 }
 
 /// Initializes a new deposit pool with base APY and configuration
 entry fun new<Base, Loyalty>(
     treasury_cap: TreasuryCap<Loyalty>,
-    base_apy: u8,
+    base_apy: u16,
+    rate_decimal: Option<u8>,
     early_withdrawal: bool,
     withdrawal_pending: u32,
     ctx: &mut TxContext,
@@ -86,11 +93,13 @@ entry fun new<Base, Loyalty>(
     let admin = AdminCap {
         id: object::new(ctx),
     };
+
     let mut pool = DepositPool<Base, Loyalty> {
         id: object::new(ctx),
         balance: zero<Base>(),
         treasury_cap: treasury_cap,
         admin_cap_id: object::id(&admin),
+        rate_decimal: rate_decimal.destroy_or!(2),
         return_rates: table::new(ctx),
         version: VERSION,
         options: bag::new(ctx),
@@ -115,16 +124,20 @@ public fun deposit<Base, Loyalty>(
     coin: Coin<Base>,
     term: u32,
     recipient: address,
+    expected_apy: Option<u16>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
-        (term as u64, pool.return_rates.borrow(term))
+        (term as u64, *pool.return_rates.borrow(term))
     } else {
-        (0, pool.return_rates.borrow(0))
+        (0, *pool.return_rates.borrow(0))
     };
+
+    // if expected_apy has some value, ensure fetched apy is higer.
+    assert!(expected_apy.destroy_or!(0)<=apy, EApyMismatched);
 
     transfer::transfer(
         Receipt {
@@ -133,7 +146,7 @@ public fun deposit<Base, Loyalty>(
             amount: coin.value(),
             issue_at_ms: clock.timestamp_ms(),
             mature_at_ms: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
-            apy: *apy,
+            apy: apy,
         },
         recipient,
     );
@@ -207,7 +220,7 @@ public fun upsert_lock_term<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     admin: &mut AdminCap,
     days: u32,
-    apy: u8,
+    apy: u16,
 ) {
     assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
@@ -239,6 +252,7 @@ public fun delete_lock_term<Base, Loyalty>(
 ) {
     assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
+    assert!(days!=0, ERemovingDefaultTerm);
     // lock_term in ms
     pool.return_rates.remove(days);
 }
@@ -281,7 +295,7 @@ fun calculate_token_amount<Base, Loyalty>(
     amount: u64,
     mature_at_ms: u64,
     issue_at_ms: u64,
-    apy: u8,
+    apy: u16,
 ): u64 {
     let withdraw_at_ms = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITHDRAWAL_PENDING)
@@ -295,7 +309,7 @@ fun calculate_token_amount<Base, Loyalty>(
 
     let eligible_term: u64 = (withdraw_at_ms - issue_at_ms)/MS_PER_DAY; // <u32
 
-    let yearly_return = (amount as u128 * (apy as u128))/(MAX_PCT); // <u65
+    let yearly_return = (amount as u128 * (apy as u128))/(10_u128.pow(pool.rate_decimal)); // <u80
     ((eligible_term as u128 * yearly_return)/DAY_PER_YEAR).try_as_u64().destroy_or!(0)
-    // in a conrner case, eligible term * yearly return is larger than u64, so we stop issue_at_ms token to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
+    // in a corner case, eligible term * yearly return is larger than u64, so we stop issue tokens to not block the execution. It is a liveness consideration, so the project side should compensate the case manually.
 }

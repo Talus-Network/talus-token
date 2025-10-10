@@ -48,11 +48,12 @@ The deposit pool module allows users to deposit base tokens and earn loyalty tok
 ```move
 // Initialize a deposit pool
 let treasury_cap = // ... obtain Loyalty token treasury cap
-let base_apy = 5; // 5% APY
+let base_apy = 5; // APY
+let rate_decimal = Some(2); // unit of 1% 
 let early_withdrawal = true;
 let withdrawal_pending_days = 2;
-deposit_pool::deposit_pool::initiate<Base, Loyalty>(
-    treasury_cap, base_apy, early_withdrawal, withdrawal_pending_days, ctx
+deposit_pool::deposit_pool::new<Base, Loyalty>(
+    treasury_cap, base_apy, base_decimal, early_withdrawal, withdrawal_pending_days, ctx
 );
 
 // Deposit base tokens
@@ -70,21 +71,23 @@ The reward pool module manages reward pools and allows users to claim rewards by
 
 ```move
 // Create a new reward pool
-let reward_coin = // ... obtain reward tokens
-let rate = 10; // 10 Loyalty tokens per reward token
-deposit_pool::reward_program::new_reward_pool<Loyalty, Reward>(reward_coin, rate, ctx);
+let reward_coin = 100// ... obtain reward tokens
+let loyalty_per_unit = 10; 
+let reward_per_unit = 1; // 10 Loyalty tokens per reward token
+let minimum_expected_reward = 10; 
+deposit_pool::reward_program::new_reward_pool<Loyalty, Reward>(reward_coin, loyalty_rate, reward_rate, ctx);
 
 // Add more rewards to the pool
 deposit_pool::reward_program::reward_fresh(pool, additional_reward_coin);
 
 // Claim rewards by spending loyalty tokens
-deposit_pool::reward_program::claim(pool, loyalty_token, policy, ctx);
+deposit_pool::reward_program::claim(pool, loyalty_token, policy, Some(minimum_expected_reward), ctx);
 ```
 
 ## Deployment
 
 The project includes an automated deployment script that:
-1. Starts a local Sui node if remote rpc is not provided
+1. Starts a local Sui node if remote RPC is not provided
 2. Sets up the environment
 3. Publishes all contracts
 4. Initializes the faucet and deposit pool with initial liquidity
