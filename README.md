@@ -42,6 +42,8 @@ The deposit pool module allows users to deposit base tokens and earn loyalty tok
 - Pending withdrawal period (optional)
 - Admin-controlled reward pool integration
 - Receipts for each deposit, enabling precise reward calculation
+- Admin-controlled term extending option
+- User can extend a pre-mature existed deposit to a higher term 
 
 #### Usage
 
