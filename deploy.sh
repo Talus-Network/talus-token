@@ -130,14 +130,14 @@ echo "Talus coin at : \"$TALUS_COIN\""
 ###########################################
 # Faucet Deployment (Optional)
 ###########################################
+# Calculate split amounts for faucet
+if [ -z "$INIT_AMOUNT" ]; then
+    SPLIT_AMOUNT=$DEFAULT_INIT
+else
+    SPLIT_AMOUNT=$(_calculate_amount "$TOTAL_SUPPLY-$INIT_AMOUNT")
+fi
 
 if [[ "${DEPLOY_FAUCET,,}" =~ ^(y|yes)$ ]]; then
-    # Calculate split amounts for faucet
-    if [ -z "$INIT_AMOUNT" ]; then
-        SPLIT_AMOUNT=$DEFAULT_INIT
-    else
-        SPLIT_AMOUNT=$(_calculate_amount "$TOTAL_SUPPLY-$INIT_AMOUNT")
-    fi
 
     echo "Split coin"
     _spliter=$($SUI client split-coin --coin-id $TALUS_COIN --amounts $SPLIT_AMOUNT)
@@ -184,8 +184,8 @@ echo "Loyalty Program Contract at: \"$LoyaltyProgramContractID\""
 echo "Loyalty Token Contract at: \"$LoyaltyTokenContractID\""
 echo "Loyalty Token Cap at: \"$LoyaltyTreasuryCap\""
 
-# Initialize reward pool
-echo "Init reward pool and Deposit Pool"
+# Initialize deposit pool
+echo "Init Deposit pool"
 script=$($SUI client call --package $LoyaltyProgramContractID --module deposit_pool --function new \
         --type-args $TOKEN_CONTRACT_ID::us::US --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
         --args $LoyaltyTreasuryCap --args $BASE_APY --args [] --args false --args 0 \
@@ -239,7 +239,7 @@ echo "Policy at $PolicyID"
 #          --type-args $TOKEN_CONTRACT_ID::us::US \
 #          --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
 #          --args $DEPOSIT_POOL \
-#          --args <us coin> \
+#          --args <us coin id> \
 #          --args 0 --args $USER \
 #          --args [] --args 0x6 --dry-run
 
@@ -250,8 +250,53 @@ echo "Policy at $PolicyID"
 #         --args 0x6 --gas-budget 10000000
 
 # echo "Test claim reward"
-# $SUI client call --package $LoyaltyProgramContractID --module reward_program \
+# $SUI client call --package $LoyaltyProgramContractID --module reward_pool \
 #         --function claim \
 #         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \ 
 #         --type-args $TOKEN_CONTRACT_ID::us::US 
 #         --args $DEPOSIT_POOL --args <token id> --args $PolicyID --args [] \
+
+# echo "Test add term"
+# $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#         --function upsert_lock_term \
+#         --type-args $TOKEN_CONTRACT_ID::us::US \
+#         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args $ADMIN_CAP --args 30 --args 10 --dry-run 
+
+# $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#         --function upsert_lock_term \
+#         --type-args $TOKEN_CONTRACT_ID::us::US \
+#         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args $ADMIN_CAP --args 60 --args 20 --dry-run 
+
+
+# echo "Test deposit to pool"
+#  $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#          --function deposit \
+#          --type-args $TOKEN_CONTRACT_ID::us::US \
+#          --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#          --args $DEPOSIT_POOL \
+#          --args <us coin id> \
+#          --args 30 --args $USER \
+#          --args [] --args 0x6 --dry-run
+
+# should error now
+# $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#         --function upgrade_term \
+#         --type-args $TOKEN_CONTRACT_ID::us::US \
+#         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args <receipt id> --args 60 \
+#         --args [20] --args 0x6 --dry-run 
+
+# $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#         --function enable_extending_terms \
+#         --type-args $TOKEN_CONTRACT_ID::us::US \
+#         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args $ADMIN_CAP --dry-run 
+
+# $SUI client call --package $LoyaltyProgramContractID --module deposit_pool \
+#         --function upgrade_term \
+#         --type-args $TOKEN_CONTRACT_ID::us::US \
+#         --type-args $LoyaltyTokenContractID::loyalty::LOYALTY \
+#         --args $DEPOSIT_POOL --args <receipt id> --args 60 \
+#         --args [20] --args 0x6 --dry-run 

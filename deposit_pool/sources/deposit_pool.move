@@ -29,6 +29,10 @@ const EPendingWithdrawal: u64 = 5;
 const ERemovingDefaultTerm: u64 = 6;
 /// Error when user choose a term with apy less than expectation;
 const EApyMismatched: u64 = 7;
+/// Error when user tries to extend term when the pool not support it;
+const ENotSupportExtendTerm: u64 = 8;
+/// Error when user tries to extend term with wrong parameters;
+const EInvalidExtendTerm: u64 = 9;
 
 // ====================== Const =================
 /// Current version of the contract
@@ -42,6 +46,9 @@ const KEY_SUPPORT_EARLY_WITHDRAWAL: u8 = 1;
 
 /// Option key for withdrawal pending window (days: u32), optional.
 const KEY_WITHDRAWAL_PENDING: u8 = 2;
+
+/// Option key for enable upgrade the term for higher apy (bool), optional.
+const KEY_SUPPORT_TERM_EXTENSION: u8 = 3;
 
 public struct AdminCap has key, store {
     id: UID,
@@ -131,9 +138,9 @@ public fun deposit<Base, Loyalty>(
     assert!(pool.version == VERSION, EWrongVersion);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
-        (term as u64, *pool.return_rates.borrow(term))
+        (term as u64, pool.return_rates[term])
     } else {
-        (0, *pool.return_rates.borrow(0))
+        (0, pool.return_rates[0])
     };
 
     // if expected_apy has some value, ensure fetched apy is higer.
@@ -166,7 +173,7 @@ entry fun withdraw<Base, Loyalty>(
 
     // Check eligible for execute withdrawal. Option always exists as this immutable option
     // was added during pool creation
-    if (pool.options.borrow(KEY_SUPPORT_EARLY_WITHDRAWAL)!= true) {
+    if (!pool.options[KEY_SUPPORT_EARLY_WITHDRAWAL]) {
         assert!(clock.timestamp_ms() >= receipt.mature_at_ms, ENotSupportEarlyWithdrawal);
     };
 
@@ -181,7 +188,7 @@ entry fun withdraw<Base, Loyalty>(
             df::add(
                 &mut pool.id,
                 id(&receipt),
-                clock.timestamp_ms() + *pool.options.borrow(KEY_WITHDRAWAL_PENDING),
+                clock.timestamp_ms() + pool.options[KEY_WITHDRAWAL_PENDING],
             );
             transfer::transfer(receipt, ctx.sender());
             return
@@ -213,6 +220,41 @@ entry fun withdraw<Base, Loyalty>(
 
     // return base
     transfer::public_transfer(pool.balance.split(amount).into_coin(ctx), ctx.sender());
+}
+
+/// Upgrade the term of premature deposit receipt if support
+public fun upgrade_term<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    receipt: &mut Receipt,
+    target_term: u32,
+    target_apy: Option<u16>,
+    clock: &Clock,
+) {
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(receipt.pool_id == object::id(pool), EWrongPool);
+
+    // if option does not exists, directly abort
+    assert!(pool.options.contains(KEY_SUPPORT_TERM_EXTENSION), ENotSupportExtendTerm);
+
+    // mature receipt cannot extend, thus if the receipt within withdrwal pending will
+    // not get additional benefits. An early withdrawal pending will not get any token
+    // so we can safely ignore the withdrawal pending situation.
+    assert!(receipt.mature_at_ms > clock.timestamp_ms(), EInvalidExtendTerm);
+
+    // new apy must exists
+    let new_apy = pool.return_rates[target_term];
+
+    // To prevent misoperation, if user did not specify the apy, then new apy should be no less than the old one
+    // However, user may explicilty choose a lower apy.
+    assert!(new_apy>=target_apy.destroy_or!(receipt.apy), EApyMismatched);
+
+    let new_mature_at_ms = receipt.issue_at_ms + (target_term as u64)*MS_PER_DAY;
+
+    // mature term should be increase only.
+    assert!(new_mature_at_ms>receipt.mature_at_ms, EInvalidExtendTerm);
+
+    receipt.mature_at_ms = new_mature_at_ms;
+    receipt.apy = new_apy;
 }
 
 /// Updates or adds a new lock term period with corresponding APY
@@ -257,6 +299,27 @@ public fun delete_lock_term<Base, Loyalty>(
     pool.return_rates.remove(days);
 }
 
+public fun enable_extending_terms<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &mut AdminCap,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+
+    pool.options.add(KEY_SUPPORT_TERM_EXTENSION, true);
+}
+
+public fun disable_extending_terms<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &mut AdminCap,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+
+    // abort if not exists, then no meaning to disable it.
+    pool.options.remove<u8, bool>(KEY_SUPPORT_TERM_EXTENSION);
+}
+
 /// Adds a new reward pool policy for loyalty tokens
 #[allow(lint(self_transfer))]
 public fun add_reward_program<Policy: drop, Base, Loyalty>(
@@ -298,7 +361,7 @@ fun calculate_token_amount<Base, Loyalty>(
     apy: u16,
 ): u64 {
     let withdraw_at_ms = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
-        df::remove(&mut pool.id, receipt_id) - *pool.options.borrow(KEY_WITHDRAWAL_PENDING)
+        df::remove(&mut pool.id, receipt_id) - pool.options[KEY_WITHDRAWAL_PENDING]
     } else {
         clock.timestamp_ms()
     };
