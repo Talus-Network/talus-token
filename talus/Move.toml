@@ -3,8 +3,6 @@ name = "Talus"
 edition = "2024.beta"
 authors = ["Talus Labs <hi@taluslabs.xyz>"]
 
-[dependencies]
-
 [addresses]
 talus = "0x0"
 
