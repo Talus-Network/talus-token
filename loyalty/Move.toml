@@ -1,10 +1,7 @@
 [package]
-name = "loyalty"
+name = "Loyalty"
 edition = "2024.beta" 
 authors = ["Talus Labs <hi@taluslabs.xyz>"]
-
-[dependencies]
-Talus = {local = "../talus"}
 
 [addresses]
 loyalty = "0x0"
