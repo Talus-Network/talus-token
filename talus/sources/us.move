@@ -7,10 +7,10 @@ use sui::url;
 const TOTAL_TALUS_SUPPLY_TO_MINT: u64 = 10_000_000_000; // 10B US
 const DECIMALS: u8 = 9;
 const SYMBOL: vector<u8> = b"US";
-const NAME: vector<u8> = b"TALUS Token";
+const NAME: vector<u8> = b"Talus Token";
 const DESCRIPTION: vector<u8> = b"The native token for the Talus Network.";
 // todo need to update
-const ICON_URL: vector<u8> = b"https://talus.network/talus-icon.svg";
+const ICON_URL: vector<u8> = b"https://talus.network/us-icon.svg";
 
 /// The OTW for the `US` coin.
 public struct US has drop {}
@@ -25,7 +25,7 @@ public struct ProtectedTreasury has key {
 /// `TreasuryCap` from the `ProtectedTreasury` off-chain.
 public struct TreasuryCapKey has copy, drop, store {}
 
-/// Initializes the US token and mints the total supply to the publisher.
+/// Initializes the Talus token and mints the total supply to the publisher.
 /// This also wraps the `TreasuryCap` in a `ProtectedTreasury` analogous to the SuiNS token.
 ///
 /// After publishing this, the `UpgradeCap` must be burned to ensure that the supply
@@ -60,7 +60,7 @@ fun init(otw: US, ctx: &mut TxContext) {
     transfer::public_transfer(minted_coin, ctx.sender());
 }
 
-/// Get the total supply of the US token.
+/// Get the total supply of the Talus token.
 public fun total_supply(treasury: &ProtectedTreasury): u64 {
     treasury.borrow_cap().total_supply()
 }
@@ -103,14 +103,14 @@ fun test_init() {
 
     assert!(coin_metadata.get_decimals() == 9);
     assert!(coin_metadata.get_symbol() == b"US".to_ascii_string());
-    assert!(coin_metadata.get_name() == b"TALUS Token".to_string());
+    assert!(coin_metadata.get_name() == b"Talus Token".to_string());
     assert!(
         coin_metadata.get_description() ==
             b"The native token for the Talus Network.".to_string(),
     );
     assert!(
         coin_metadata.get_icon_url() == option::some(
-            url::new_unsafe_from_bytes(b"https://talus.network/talus-icon.svg"),
+            url::new_unsafe_from_bytes(b"https://talus.network/us-icon.svg"),
         ),
     );
 
