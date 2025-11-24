@@ -45,6 +45,7 @@ build/
 
 #Move Lock
 *.lock
+!talus/reconstruct-lock/**/*.lock
 
 # Move coverage and tracing information
 .trace
