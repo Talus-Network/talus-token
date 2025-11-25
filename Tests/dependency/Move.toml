@@ -1,0 +1,10 @@
+[package]
+name = "dependency"
+edition = "2024.beta"
+[dependencies]
+
+Talus = {local = "../../talus"}
+[addresses]
+dependency = "0x0"
+
+
