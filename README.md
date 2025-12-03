@@ -22,19 +22,42 @@ talus-token/
 
 ## Contracts
 
-### Talus Token
-A custom token implementation on the Sui blockchain.
+### Talus Contract
+A custom coin implementation on the Sui blockchain.
 
-### Faucet Module
-The faucet module implements a faucet that enables exchanging between target token (e.g. TALUS) and base token (e.g. SUI) at a configurable exchange rate. Key features include:
+### Loyalty Token Contract
+A custom token implementation on the Sui blockchain. Repeated used for every deposit pool instance.
+
+### Faucet Contract
+The faucet contract implements a faucet that enables exchanging between target token (e.g. TALUS) and base token (e.g. SUI) at a configurable exchange rate. Key features include:
 
 - Configurable exchange rate between two tokens for test net so the Sybil attack resistance is based on supply of base token
 - Percentage-based withdrawal limits to prevent draining
 - Ability to inject additional liquidity
 - Simple interface for minting and refunding
 
-### Deposit Pool Module
+```move
+// Create a new faucet
+let talus_coin = // ... obtain TALUS tokens
+let exchange_rate = 10; // 1 SUI = 10 TALUS
+let withdrawal_pct = 50; // 50% max withdrawal per tx
+faucet::initiate<TALUS, SUI>(talus_coin, exchange_rate, withdrawal_pct, ctx);
 
+// Mint TALUS using SUI
+faucet::mint(faucet, sui_coin, ctx);
+
+// Refund SUI by returning TALUS
+faucet::refund(faucet, talus_coin, ctx);
+
+// Add more liquidity
+faucet::inject(faucet, additional_talus, ctx);
+```
+
+### Deposit Pool Contract
+
+A set of modules supports locking coins to receive tokens and exchanging them for rewards.
+
+#### Deposit Pool Module
 The deposit pool module allows users to deposit base tokens and earn loyalty tokens as rewards. Users can lock their tokens for different time periods with varying APY rates. Key features include:
 
 - Multiple lock terms with configurable APY
@@ -44,8 +67,6 @@ The deposit pool module allows users to deposit base tokens and earn loyalty tok
 - Receipts for each deposit, enabling precise reward calculation
 - Admin-controlled term extending option
 - User can extend a pre-mature existed deposit to a higher term 
-
-#### Usage
 
 ```move
 // Initialize a deposit pool
@@ -68,8 +89,6 @@ deposit_pool::deposit_pool::withdrawal(pool, receipt, clock, ctx);
 ### Reward Pool Module
 
 The reward pool module manages reward pools and allows users to claim rewards by spending loyalty tokens. Pools can be refreshed with more rewards, and events are emitted for transparency.
-
-#### Usage
 
 ```move
 // Create a new reward pool
@@ -101,55 +120,8 @@ To deploy:
 # You will be prompted for:
 - RPC URL (default: http://127.0.0.1:9000)
 - Environment alias (default: local)
-- Initial amount (default: 50% of total supply)
 - Exchange rate (default: 10 TALUS/SUI)
+- Deploy Faucet OR NOT (default: yes)
 - Max withdrawal ratio (default: 50%)
+- Initial amount (default: 50% of total supply)
 ```
-
-## Faucet Module
-
-The faucet module implements a faucet that enables exchanging two types of coins at a fixed exchange rate. Key features include:
-
-- Fixed exchange rate between two coin types
-- Withdrawal limits to prevent draining
-- Ability to inject additional liquidity
-- Simple interface for minting and refunding
-
-### Usage
-
-```move
-// Create a new faucet
-let talus_coin = // ... obtain TALUS tokens
-let exchange_rate = 10; // 1 SUI = 10 TALUS
-let withdrawal_pct = 50; // 50% max withdrawal per tx
-faucet::initiate<TALUS, SUI>(talus_coin, exchange_rate, withdrawal_pct, ctx);
-
-// Mint TALUS using SUI
-faucet::mint(faucet, sui_coin, ctx);
-
-// Refund SUI by returning TALUS
-faucet::refund(faucet, talus_coin, ctx);
-
-// Add more liquidity
-faucet::inject(faucet, additional_talus, ctx);
-```
-
-## Security Features
-
-The contracts include several security measures:
-- Withdrawal limits (configurable percentage) prevent large withdrawals
-- Fixed exchange rates prevent manipulation
-- Shared object model ensures equal access
-- Idempotent deployment process
-- Retry mechanisms for faucet operations
-- Admin controls for deposit pool and reward pool configuration
-
-## Configuration
-
-Default values in deployment:
-- Total Supply: 10^19 tokens
-- Initial Faucet Amount: 50% of total supply
-- Exchange Rate: 10 TALUS/SUI
-- Withdrawal Limit: 50% per transaction
-
-These values can be customized during deployment through the interactive prompts.
