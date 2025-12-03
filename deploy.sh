@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -euo pipefail
+# set -euo pipefail
 
 ###########################################
 # Configuration Variables
@@ -9,14 +9,14 @@ SUI="sui"
 TOTAL_SUPPLY="10^19"
 INITIAL_SPLIT_AMOUNT=0 
 BASE_APY=2
-APY_DECIMAL="2" # an Option<u8> value, "2" means 1%, "3" means 0.1%, "4" means 0.01%, etc
+APY_DECIMAL="2" # an Option<u8> value for APY decimal, "2" means 1%, "3" means 0.1%, "4" means 0.01%, etc
 
 ###########################################
 # Helper Functions
 ###########################################
 
 # Calculate large numbers using bc
-_calculate_amount() {  # Changed from _calculate
+_calculate_amount() { 
     echo "scale=0; $1" | bc
 }
 
@@ -71,10 +71,12 @@ DEFAULT_INIT=$(_calculate_amount "$TOTAL_SUPPLY/2")
 # Collect user inputs with descriptive prompts
 read -p "Enter RPC URL (default: http://127.0.0.1:9000): " RPC_URL
 read -p "Enter environment alias (default: local): " ENV_ALIAS
-read -p "Enter faucet source size (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
 read -p "Enter exchange rate Talus/Sui (default: 10): " EXCHANGE_RATE
-read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
-read -p "Deploy and initialize faucet? (y/N): " DEPLOY_FAUCET
+read -p "Deploy and initialize faucet? (y/n): " DEPLOY_FAUCET
+if [[ "$DEPLOY_FAUCET" == "y" ]]; then
+    read -p "Enter max withdrawal ratio every time (default: 50 (0~100)): " WITHDRAWAL_PCT
+    read -p "Enter faucet source size (default: $DEFAULT_INIT (half)): " INIT_AMOUNT
+fi
 
 # Set default values for configuration
 RPC_URL=${RPC_URL:-"http://127.0.0.1:9000"}
@@ -164,8 +166,8 @@ fi
 
 # Prepare coins for reward pool
 sleep 3
-echo "Split coin for reward pool"
-TALUS_COIN=$($SUI client balance --with-coins --json | jq -er '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId')
+echo "Split the first coin for initiating a reward pool"
+TALUS_COIN=$($SUI client balance --with-coins --json | jq -er '.[0][][1][] | select(.coinType | contains("::us::US")) | .coinObjectId' | head -n 1)
 RESERVE_SIZE=$(_calculate_amount "($TOTAL_SUPPLY*85/100)-$SPLIT_AMOUNT")
 _spliter=$($SUI client split-coin --coin-id $TALUS_COIN --amounts $RESERVE_SIZE)
 
@@ -218,7 +220,7 @@ PolicyID=$($SUI client call --package $LoyaltyProgramContractID --module deposit
 echo "Policy at $PolicyID"
 
 ###########################################
-# Test Commands (Commented Out)
+# Test Commands
 ###########################################
 
 # Test mint
