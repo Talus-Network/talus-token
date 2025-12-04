@@ -45,6 +45,9 @@ build/
 
 #Move Lock
 *.lock
+!loyalty/Move.lock
+!deposit_pool/Move.lock
+!talus/Move.lock
 
 # Move coverage and tracing information
 .trace
