@@ -2,6 +2,7 @@
 /// Users can lock their tokens for different time periods with varying APY rates.
 module deposit_pool::deposit_pool;
 
+use std::option::{none, some};
 use std::u128::pow;
 use sui::bag::{Self, Bag};
 use sui::balance::{zero, Balance};
@@ -10,7 +11,7 @@ use sui::coin::{TreasuryCap, Coin};
 use sui::dynamic_field as df;
 use sui::object::id;
 use sui::table::{Self, Table};
-use sui::token;
+use sui::token::{Self, Token};
 
 // ===================== Error Codes================
 /// Error when caller is not the admin
@@ -36,7 +37,7 @@ const EInvalidExtendTerm: u64 = 9;
 
 // ====================== Const =================
 /// Current version of the contract
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 /// Milliseconds in one day (<2^27)
 const MS_PER_DAY: u64 = 86400000;
 const DAY_PER_YEAR: u128 = 365;
@@ -135,6 +136,20 @@ public fun deposit<Base, Loyalty>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    transfer::transfer(
+        do_deposit(pool, coin, term, expected_apy, clock, ctx),
+        recipient,
+    );
+}
+
+public fun do_deposit<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    coin: Coin<Base>,
+    term: u32,
+    expected_apy: Option<u16>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Receipt {
     assert!(pool.version == VERSION, EWrongVersion);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
@@ -146,19 +161,18 @@ public fun deposit<Base, Loyalty>(
     // if expected_apy has some value, ensure fetched apy is higer.
     assert!(expected_apy.destroy_or!(0)<=apy, EApyMismatched);
 
-    transfer::transfer(
-        Receipt {
-            id: object::new(ctx),
-            pool_id: object::id(pool),
-            amount: coin.value(),
-            issue_at_ms: clock.timestamp_ms(),
-            mature_at_ms: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
-            apy: apy,
-        },
-        recipient,
-    );
+    let receipt = Receipt {
+        id: object::new(ctx),
+        pool_id: object::id(pool),
+        amount: coin.value(),
+        issue_at_ms: clock.timestamp_ms(),
+        mature_at_ms: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
+        apy: apy,
+    };
 
     pool.balance.join(coin.into_balance());
+
+    receipt
 }
 
 /// Withdraws base tokens and claims loyalty tokens if eligible
@@ -168,6 +182,22 @@ entry fun withdraw<Base, Loyalty>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let (coin, token) = do_withdrawal(pool, receipt, clock, ctx);
+
+    coin.destroy!(|c| transfer::public_transfer(c, ctx.sender()));
+
+    token.destroy!(|token| {
+        let req = token::transfer(token, ctx.sender(), ctx);
+        token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
+    })
+}
+
+public fun do_withdrawal<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    receipt: Receipt,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Option<Coin<Base>>, Option<Token<Loyalty>>) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
 
@@ -191,7 +221,7 @@ entry fun withdraw<Base, Loyalty>(
                 clock.timestamp_ms() + pool.options[KEY_WITHDRAWAL_PENDING],
             );
             transfer::transfer(receipt, ctx.sender());
-            return
+            return (none(), none())
         }
     };
 
@@ -205,21 +235,23 @@ entry fun withdraw<Base, Loyalty>(
         issue_at_ms,
         apy,
     );
-    if (token_amount>0) {
-        let token = token::mint<Loyalty>(
-            &mut pool.treasury_cap,
-            token_amount,
-            ctx,
-        );
-        let req = token::transfer(token, ctx.sender(), ctx);
-
-        token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
-    };
 
     id.delete();
+    let value = pool.balance.split(amount).into_coin(ctx);
+    if (token_amount>0) {
+        return (
+            some(value),
+            some(
+                token::mint<Loyalty>(
+                    &mut pool.treasury_cap,
+                    token_amount,
+                    ctx,
+                ),
+            ),
+        )
+    };
 
-    // return base
-    transfer::public_transfer(pool.balance.split(amount).into_coin(ctx), ctx.sender());
+    (some(value), none())
 }
 
 /// Upgrade the term of premature deposit receipt if support

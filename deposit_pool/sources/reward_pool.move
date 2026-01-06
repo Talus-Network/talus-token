@@ -88,8 +88,7 @@ entry fun refresh<Loyalty, Reward>(pool: &mut RewardPool<Loyalty, Reward>, coin:
     });
 }
 
-/// Claims rewards by spending loyalty tokens. Transfers reward tokens to the user
-/// and emits a redeem event.
+/// Claims rewards and transfers reward tokens to the user
 #[allow(lint(self_transfer))]
 public fun claim<Loyalty, Reward>(
     pool: &mut RewardPool<Loyalty, Reward>,
@@ -98,6 +97,17 @@ public fun claim<Loyalty, Reward>(
     expected_return: Option<u64>,
     ctx: &mut TxContext,
 ) {
+    transfer::public_transfer(pool.do_claim(token, policy, expected_return, ctx), ctx.sender());
+}
+
+/// Claims rewards by spending loyalty tokens and emits a redeem event.
+public fun do_claim<Loyalty, Reward>(
+    pool: &mut RewardPool<Loyalty, Reward>,
+    token: Token<Loyalty>,
+    policy: &mut TokenPolicy<Loyalty>,
+    expected_return: Option<u64>,
+    ctx: &mut TxContext,
+): Coin<Reward> {
     let claim_amount = pool.exchange_rate.exchange_amount(token.value());
 
     // add expect return constraint
@@ -110,12 +120,13 @@ public fun claim<Loyalty, Reward>(
 
     let (token_name, amount, user_address, _) = confirm_request_mut(policy, req, ctx);
 
-    transfer::public_transfer(pool.balance.split(claim_amount).into_coin(ctx), ctx.sender());
     event::emit(RewardRedeemedEvent {
         token_name,
         amount,
         user_address,
     });
+
+    pool.balance.split(claim_amount).into_coin(ctx)
 }
 
 #[allow(lint(self_transfer))]
