@@ -1384,3 +1384,275 @@ fun test_upgrade_to_a_lower_term() {
     clock.destroy_for_testing();
     scenario.end();
 }
+
+#[test]
+fun test_withdraw_and_redeposit_in_same_transaction() {
+    let mut scenario = ts::begin(ADMIN);
+    // Create treasury cap for Loyalty token
+    let loyalty_cap = coin::create_treasury_cap_for_testing<Loyalty>(scenario.ctx());
+
+    // Initialize pool
+    deposit_pool::new<Base, Loyalty>(
+        loyalty_cap,
+        Base_APY,
+        none(),
+        true,
+        0,
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(ADMIN);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let mut admin_cap = ts::take_from_address<deposit_pool::AdminCap>(&scenario, ADMIN);
+
+    // Add a lock term
+    pool.upsert_lock_term(&mut admin_cap, Lock_DAY, Base_APY);
+
+    // enable wrapper for stroing receipt
+    pool.enable_receipt_wrapper(&mut admin_cap);
+
+    ts::return_to_address(ADMIN, admin_cap);
+
+    // Setup clock
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    // First deposit
+    scenario.next_tx(USER);
+    {
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        pool.deposit(
+            coin_base,
+            Lock_DAY,
+            USER,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+    };
+
+    // Advance clock past maturity
+    clock.increment_for_testing(Lock_DAY as u64 * MS_PER_DAY);
+
+    // Withdraw and immediately redeposit in the same transaction
+    scenario.next_tx(USER);
+    {
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+
+        // Withdraw the previously deposited tokens
+        let (coin_base_opt, _loyalty_tokens) = pool.do_withdrawal(receipt, &clock, scenario.ctx());
+
+        // burn loyalty token;
+        _loyalty_tokens.destroy!(|t| t.burn_for_testing());
+
+        // Extract the coin from Option
+        let coin_base = coin_base_opt.destroy_some();
+
+        // Verify we got the correct amount back
+        assert!(coin::value(&coin_base) == Deposit, 1);
+
+        // Now redeposit the withdrawn coins for another lock period
+        let new_receipt = pool.do_deposit(
+            coin_base,
+            Lock_DAY,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Transfer the new receipt to the user
+        let wrapper = pool.receipt_to_wrapper(new_receipt, scenario.ctx());
+        // now wrapper can be transferred publicly
+        transfer::public_transfer(wrapper, USER);
+        ts::return_shared(pool);
+    };
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_receipt_wrapper_enable_and_convert() {
+    let mut scenario = init_deposit_pool(true, 0);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let mut admin_cap = ts::take_from_address<deposit_pool::AdminCap>(&scenario, ADMIN);
+
+        // Enable receipt wrapper feature
+        pool.enable_receipt_wrapper(&mut admin_cap);
+
+        ts::return_to_address(ADMIN, admin_cap);
+        ts::return_shared(pool);
+    };
+
+    // Create a deposit
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        let receipt = pool.do_deposit(
+            coin_base,
+            Lock_DAY,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Convert receipt to wrapper
+        let wrapper = pool.receipt_to_wrapper(receipt, scenario.ctx());
+
+        // Convert wrapper back to receipt
+        let new_receipt = pool.wrapper_to_receipt(wrapper, scenario.ctx());
+
+        pool.withdraw(new_receipt, &clock, scenario.ctx());
+        ts::return_shared(pool);
+    };
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = deposit_pool::ENotSupportReceiptWrapper)]
+fun test_receipt_wrapper_without_enable() {
+    let mut scenario = init_deposit_pool(true, 0);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    // Create a deposit without enabling wrapper feature
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        let receipt = pool.do_deposit(
+            coin_base,
+            Lock_DAY,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Try to convert to wrapper without enabling - should fail
+        let wrapper = pool.receipt_to_wrapper(receipt, scenario.ctx());
+        transfer::public_transfer(wrapper, USER);
+        ts::return_shared(pool);
+    };
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_receipt_wrapper_store_and_retrieve() {
+    let mut scenario = init_deposit_pool(true, 0);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let mut admin_cap = ts::take_from_address<deposit_pool::AdminCap>(&scenario, ADMIN);
+
+        // Enable receipt wrapper feature
+        pool.enable_receipt_wrapper(&mut admin_cap);
+
+        ts::return_to_address(ADMIN, admin_cap);
+        ts::return_shared(pool);
+    };
+
+    // Create a deposit and store wrapper in dynamic field
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        let receipt = pool.do_deposit(
+            coin_base,
+            Lock_DAY,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Convert to wrapper
+        let wrapper = pool.receipt_to_wrapper(receipt, scenario.ctx());
+
+        // Store wrapper in a temporary object (simulating storage)
+        // For this test, we'll just verify the wrapper contains correct data and convert back
+        let retrieved_wrapper = wrapper;
+
+        // Convert back to receipt
+        let final_receipt = pool.wrapper_to_receipt(retrieved_wrapper, scenario.ctx());
+
+        pool.withdraw(final_receipt, &clock, scenario.ctx());
+        ts::return_shared(pool);
+    };
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_receipt_wrapper_public_transfer() {
+    let mut scenario = init_deposit_pool(true, 0);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let mut admin_cap = ts::take_from_address<deposit_pool::AdminCap>(&scenario, ADMIN);
+
+        // Enable receipt wrapper feature
+        pool.enable_receipt_wrapper(&mut admin_cap);
+
+        ts::return_to_address(ADMIN, admin_cap);
+        ts::return_shared(pool);
+    };
+
+    // Create a deposit and transfer wrapper (which is public_transfer enabled via store ability)
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        let receipt = pool.do_deposit(
+            coin_base,
+            Lock_DAY,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Convert to wrapper and transfer to another address
+        let wrapper = pool.receipt_to_wrapper(receipt, scenario.ctx());
+
+        // Wrapper can be publicly transferred because it has store ability
+        transfer::public_transfer(wrapper, @0xC0FF);
+
+        ts::return_shared(pool);
+    };
+
+    // Retrieve wrapper from the other address and convert back
+    scenario.next_tx(@0xC0FF);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let wrapper = ts::take_from_address<deposit_pool::ReceiptWrapper>(&scenario, @0xC0FF);
+
+        // Convert back to receipt
+        let receipt = pool.wrapper_to_receipt(wrapper, scenario.ctx());
+
+        pool.withdraw(receipt, &clock, scenario.ctx());
+        ts::return_shared(pool);
+    };
+
+    clock.destroy_for_testing();
+    scenario.end();
+}

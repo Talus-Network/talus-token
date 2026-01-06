@@ -34,6 +34,8 @@ const EApyMismatched: u64 = 7;
 const ENotSupportExtendTerm: u64 = 8;
 /// Error when user tries to extend term with wrong parameters;
 const EInvalidExtendTerm: u64 = 9;
+/// Error when the user tries to create a receipt wrapper that is not supported;
+const ENotSupportReceiptWrapper: u64 = 10;
 
 // ====================== Const =================
 /// Current version of the contract
@@ -50,6 +52,9 @@ const KEY_WITHDRAWAL_PENDING: u8 = 2;
 
 /// Option key for enable upgrade the term for higher apy (bool), optional.
 const KEY_SUPPORT_TERM_EXTENSION: u8 = 3;
+
+/// Option key for enable upgrade the term for higher apy (bool), optional.
+const KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION: u8 = 4;
 
 public struct AdminCap has key, store {
     id: UID,
@@ -76,6 +81,21 @@ public struct DepositPool<phantom Base, phantom Loyalty> has key {
 
 /// Receipt given to users when they deposit tokens
 public struct Receipt has key {
+    id: UID,
+    /// ID of the pool where deposit was made
+    pool_id: ID,
+    /// Amount of base tokens deposited
+    amount: u64,
+    /// Timestamp when deposit was made
+    issue_at_ms: u64,
+    /// Timestamp when lock period ends
+    mature_at_ms: u64,
+    /// a shifted apy, need to be divided by 10**`pool.rate_decimal`
+    apy: u16,
+}
+
+/// Receipt given to users when they deposit tokens
+public struct ReceiptWrapper has key, store {
     id: UID,
     /// ID of the pool where deposit was made
     pool_id: ID,
@@ -137,7 +157,7 @@ public fun deposit<Base, Loyalty>(
     ctx: &mut TxContext,
 ) {
     transfer::transfer(
-        do_deposit(pool, coin, term, expected_apy, clock, ctx),
+        pool.do_deposit(coin, term, expected_apy, clock, ctx),
         recipient,
     );
 }
@@ -182,7 +202,7 @@ entry fun withdraw<Base, Loyalty>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let (coin, token) = do_withdrawal(pool, receipt, clock, ctx);
+    let (coin, token) = pool.do_withdrawal(receipt, clock, ctx);
 
     coin.destroy!(|c| transfer::public_transfer(c, ctx.sender()));
 
@@ -373,6 +393,64 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
 
     token::share_policy(policy);
     transfer::public_transfer(policy_cap, tx_context::sender(ctx));
+}
+
+// allow to store a receipt through a wrapper
+public fun enable_receipt_wrapper<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &mut AdminCap,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+
+    pool.options.add(KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION, true);
+}
+
+public fun receipt_to_wrapper<Base, Loyalty>(
+    pool: &DepositPool<Base, Loyalty>,
+    receipt: Receipt,
+    ctx: &mut TxContext,
+): ReceiptWrapper {
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(receipt.pool_id == object::id(pool), EWrongPool);
+    assert!(pool.options.contains(KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION), ENotSupportReceiptWrapper);
+
+    // consume receipt
+    let Receipt { id, pool_id, amount, issue_at_ms, mature_at_ms, apy } = receipt;
+    id.delete();
+
+    // create receipt wrapper
+    ReceiptWrapper {
+        id: object::new(ctx),
+        pool_id,
+        amount,
+        issue_at_ms,
+        mature_at_ms,
+        apy,
+    }
+}
+
+public fun wrapper_to_receipt<Base, Loyalty>(
+    pool: &DepositPool<Base, Loyalty>,
+    wrapper: ReceiptWrapper,
+    ctx: &mut TxContext,
+): Receipt {
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(wrapper.pool_id == object::id(pool), EWrongPool);
+
+    // consume receipt wrapper
+    let ReceiptWrapper { id, pool_id, amount, issue_at_ms, mature_at_ms, apy } = wrapper;
+    id.delete();
+
+    // create receipt
+    Receipt {
+        id: object::new(ctx),
+        pool_id,
+        amount,
+        issue_at_ms,
+        mature_at_ms,
+        apy,
+    }
 }
 
 /// Upgrades the pool to a new version
