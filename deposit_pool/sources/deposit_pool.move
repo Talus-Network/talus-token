@@ -56,6 +56,10 @@ const KEY_SUPPORT_TERM_EXTENSION: u8 = 3;
 /// Option key for enable upgrade the term for higher apy (bool), optional.
 const KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION: u8 = 4;
 
+/// Option key that affect the loyalty yield such that no additional reward
+/// after the lock term
+const KEY_STOP_POST_MATRURITY_YIELD: u8 = 5;
+
 public struct AdminCap has key, store {
     id: UID,
 }
@@ -406,6 +410,17 @@ public fun enable_receipt_wrapper<Base, Loyalty>(
     pool.options.add(KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION, true);
 }
 
+// allow to store a receipt through a wrapper
+public fun stop_post_maturity_yield<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &mut AdminCap,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+
+    pool.options.add(KEY_STOP_POST_MATRURITY_YIELD, true);
+}
+
 public fun receipt_to_wrapper<Base, Loyalty>(
     pool: &DepositPool<Base, Loyalty>,
     receipt: Receipt,
@@ -480,7 +495,12 @@ fun calculate_token_amount<Base, Loyalty>(
         return 0
     };
 
-    let eligible_term: u64 = (withdraw_at_ms - issue_at_ms)/MS_PER_DAY; // <u32
+    // if STOP post maturity yield, than the yield is fixed according to maturity term
+    let eligible_term: u64 = if (pool.options.contains(KEY_STOP_POST_MATRURITY_YIELD)) {
+        (mature_at_ms - issue_at_ms)/MS_PER_DAY // <u32
+    } else {
+        (withdraw_at_ms - issue_at_ms)/MS_PER_DAY // <u32
+    };
 
     let yearly_return = (amount as u128 * (apy as u128))/(10_u128.pow(pool.rate_decimal)); // <u80
     ((eligible_term as u128 * yearly_return)/DAY_PER_YEAR).try_as_u64().destroy_or!(0)

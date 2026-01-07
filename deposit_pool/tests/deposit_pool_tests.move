@@ -1656,3 +1656,129 @@ fun test_receipt_wrapper_public_transfer() {
     clock.destroy_for_testing();
     scenario.end();
 }
+
+#[test]
+fun test_stop_post_maturity_yield_disabled() {
+    let mut scenario = init_deposit_pool(true, 0);
+
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    add_lock_term_for_testing(&mut scenario, &mut pool, Lock_DAY, Base_APY);
+
+    // Setup clock
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    scenario.next_tx(USER);
+    {
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        pool.deposit(
+            coin_base,
+            Lock_DAY,
+            @0xB0B,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+    };
+
+    // Advance clock past maturity by additional 30 days (post-maturity period)
+    clock.increment_for_testing(MS_PER_DAY * (Lock_DAY as u64 + 30));
+
+    scenario.next_tx(USER);
+    {
+        let receipt = ts::take_from_sender<Receipt>(&scenario);
+
+        pool.withdraw(receipt, &clock, scenario.ctx());
+    };
+
+    scenario.next_tx(USER);
+    {
+        let returned_coin = ts::take_from_address<Coin<Base>>(&scenario, USER);
+        assert!(coin::value(&returned_coin) == Deposit, 1);
+
+        // Without stop_post_maturity_yield, eligible_term should be the actual withdrawal time
+        // (Lock_DAY + 30) instead of just Lock_DAY
+        let expected_rewards =
+            (Deposit as u128 * (Base_APY as u128))/(10_u128.pow(DEFAULT_DECIMAL));
+        // eligible term = (Lock_DAY + 30) = 90 days
+        let expected_rewards = (90_u128 * expected_rewards)/365;
+
+        let reward = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
+        assert!(reward.value() == expected_rewards as u64, 2);
+
+        reward.burn_for_testing();
+        returned_coin.burn_for_testing();
+    };
+
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_stop_post_maturity_yield_enabled() {
+    let mut scenario = init_deposit_pool(true, 0);
+
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    add_lock_term_for_testing(&mut scenario, &mut pool, Lock_DAY, Base_APY);
+
+    // Setup clock
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    // Enable stop_post_maturity_yield feature
+    scenario.next_tx(ADMIN);
+    {
+        let mut admin_cap = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+        pool.stop_post_maturity_yield(&mut admin_cap);
+        ts::return_to_address(ADMIN, admin_cap);
+    };
+
+    scenario.next_tx(USER);
+    {
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        pool.deposit(
+            coin_base,
+            Lock_DAY,
+            @0xB0B,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+    };
+
+    // Advance clock past maturity by additional 30 days (post-maturity period)
+    clock.increment_for_testing(MS_PER_DAY * (Lock_DAY as u64 + 30));
+
+    scenario.next_tx(USER);
+    {
+        let receipt = ts::take_from_sender<Receipt>(&scenario);
+
+        pool.withdraw(receipt, &clock, scenario.ctx());
+    };
+
+    scenario.next_tx(USER);
+    {
+        let returned_coin = ts::take_from_address<Coin<Base>>(&scenario, USER);
+        assert!(coin::value(&returned_coin) == Deposit, 1);
+
+        // With stop_post_maturity_yield enabled, eligible_term should be fixed to Lock_DAY
+        // regardless of when the withdrawal actually happens
+        let expected_rewards =
+            (Deposit as u128 * (Base_APY as u128))/(10_u128.pow(DEFAULT_DECIMAL));
+        // eligible term = Lock_DAY = 60 days (not 90)
+        let expected_rewards = (60_u128 * expected_rewards)/365;
+
+        let reward = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
+        assert!(reward.value() == expected_rewards as u64, 2);
+
+        reward.burn_for_testing();
+        returned_coin.burn_for_testing();
+    };
+
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
