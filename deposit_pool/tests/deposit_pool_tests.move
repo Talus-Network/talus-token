@@ -862,6 +862,79 @@ fun test_cancel_pending_withdrawal() {
     scenario.end();
 }
 
+#[test]
+fun test_do_withdrawal_with_pending_first_call_returns_receipt() {
+    let mut scenario = init_deposit_pool(true, Pending_DAY);
+    // Enable withdrawal pending for Pending_DAY days
+
+    // Setup clock
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 0);
+
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let coin_base = coin::mint_for_testing<Base>(Deposit, scenario.ctx());
+
+        // Deposit without lock term (use default 0-day term)
+        let receipt = pool.do_deposit(
+            coin_base,
+            0,
+            none(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        // First call to do_withdrawal should return receipt (pending window not passed)
+        let (coin_opt, token_opt, receipt_opt) = pool.do_withdrawal(
+            receipt,
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Verify that only receipt is returned, coins and tokens are none
+        assert!(coin_opt.is_none(), 1);
+        assert!(token_opt.is_none(), 2);
+        assert!(receipt_opt.is_some(), 3);
+
+        coin_opt.destroy_none();
+        token_opt.destroy_none();
+        // Extract receipt for second withdrawal
+        let receipt = receipt_opt.destroy_some();
+
+        // Advance clock past the pending period
+        clock.increment_for_testing(Pending_DAY as u64 * MS_PER_DAY);
+
+        scenario.next_tx(USER);
+
+        // Second call to do_withdrawal should succeed and return coins and tokens
+        let (coin_opt2, token_opt2, receipt_opt2) = pool.do_withdrawal(
+            receipt,
+            &clock,
+            scenario.ctx(),
+        );
+
+        // Verify that coins are returned
+        assert!(coin_opt2.is_some(), 4);
+        assert!(receipt_opt2.is_none(), 5);
+
+        // Verify the coin value
+        let returned_coin = coin_opt2.destroy_some();
+        assert!(coin::value(&returned_coin) == Deposit, 6);
+
+        // Early withdrawal (before maturity), so no tokens
+        assert!(token_opt2.is_none(), 7);
+
+        returned_coin.burn_for_testing();
+        token_opt2.destroy!(|t| t.burn_for_testing());
+        receipt_opt2.destroy_none();
+        ts::return_shared(pool);
+    };
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
 fun init_deposit_pool(ealry_withdrawal: bool, pending: u32): Scenario {
     let mut scenario = ts::begin(ADMIN);
     // Create treasury cap for Loyalty token
@@ -1441,10 +1514,15 @@ fun test_withdraw_and_redeposit_in_same_transaction() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // Withdraw the previously deposited tokens
-        let (coin_base_opt, _loyalty_tokens) = pool.do_withdrawal(receipt, &clock, scenario.ctx());
+        let (coin_base_opt, _loyalty_tokens, _receipt) = pool.do_withdrawal(
+            receipt,
+            &clock,
+            scenario.ctx(),
+        );
 
         // burn loyalty token;
         _loyalty_tokens.destroy!(|t| t.burn_for_testing());
+        _receipt.destroy_none();
 
         // Extract the coin from Option
         let coin_base = coin_base_opt.destroy_some();

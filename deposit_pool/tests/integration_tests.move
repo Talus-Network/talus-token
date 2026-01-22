@@ -104,7 +104,7 @@ fun test_withdraw_redeem_and_redeposit_in_same_transaction() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // Withdraw: get base coins and loyalty token rewards
-        let (coin_base_opt, loyalty_tokens_opt) = pool.do_withdrawal(
+        let (coin_base_opt, loyalty_tokens_opt, receipt_opt) = pool.do_withdrawal(
             receipt,
             &clock,
             scenario.ctx(),
@@ -112,6 +112,7 @@ fun test_withdraw_redeem_and_redeposit_in_same_transaction() {
 
         let coin_base = coin_base_opt.destroy_some();
         let loyalty_tokens = loyalty_tokens_opt.destroy_some();
+        receipt_opt.destroy_none();
 
         // Verify withdrawal amounts
         assert!(coin::value(&coin_base) == Deposit, 1);
