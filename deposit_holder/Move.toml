@@ -1,0 +1,12 @@
+[package]
+name = "deposit_holder"
+edition = "2024.beta" 
+authors = ["Talus Labs <hi@taluslabs.xyz>"]
+
+[dependencies]
+DepositPool = { local = "../deposit_pool" }
+
+[addresses]
+deposit_holder = "0x0"
+DepositPool = "0x0"
+

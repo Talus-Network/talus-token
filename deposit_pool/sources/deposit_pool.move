@@ -199,7 +199,7 @@ public fun do_deposit<Base, Loyalty>(
     receipt
 }
 
-/// Withdraws base tokens and claims loyalty tokens if eligible
+/// Withdraws base tokens and claims loyalty tokens if eligible, sender should be the owner
 entry fun withdraw<Base, Loyalty>(
     pool: &mut DepositPool<Base, Loyalty>,
     receipt: Receipt,
