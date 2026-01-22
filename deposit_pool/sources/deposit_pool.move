@@ -206,14 +206,17 @@ entry fun withdraw<Base, Loyalty>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let (coin, token) = pool.do_withdrawal(receipt, clock, ctx);
+    let (coin, token, receipt) = pool.do_withdrawal(receipt, clock, ctx);
 
     coin.destroy!(|c| transfer::public_transfer(c, ctx.sender()));
 
     token.destroy!(|token| {
         let req = token::transfer(token, ctx.sender(), ctx);
         token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
-    })
+    });
+
+    // if receipt exists, prior two are none, so this one need to be safely transferred to the sender.
+    receipt.destroy!(|r| transfer::transfer(r, ctx.sender()));
 }
 
 public fun do_withdrawal<Base, Loyalty>(
@@ -221,7 +224,7 @@ public fun do_withdrawal<Base, Loyalty>(
     receipt: Receipt,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Option<Coin<Base>>, Option<Token<Loyalty>>) {
+): (Option<Coin<Base>>, Option<Token<Loyalty>>, Option<Receipt>) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
 
@@ -244,8 +247,7 @@ public fun do_withdrawal<Base, Loyalty>(
                 id(&receipt),
                 clock.timestamp_ms() + pool.options[KEY_WITHDRAWAL_PENDING],
             );
-            transfer::transfer(receipt, ctx.sender());
-            return (none(), none())
+            return (none(), none(), some(receipt))
         }
     };
 
@@ -272,10 +274,11 @@ public fun do_withdrawal<Base, Loyalty>(
                     ctx,
                 ),
             ),
+            none(),
         )
     };
 
-    (some(value), none())
+    (some(value), none(), none())
 }
 
 /// Upgrade the term of premature deposit receipt if support
