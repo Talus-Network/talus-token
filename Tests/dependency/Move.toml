@@ -1,10 +1,6 @@
 [package]
 name = "dependency"
-edition = "2024.beta"
+edition = "2024"
+
 [dependencies]
-
-Talus = {local = "../../talus"}
-[addresses]
-dependency = "0x0"
-
-
+talus = { local = "../../talus" }

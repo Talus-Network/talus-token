@@ -14,8 +14,8 @@ clean:
     @just clean-pkg loyalty
 
 # Helper: Build a specific package
-build-pkg PACKAGE:
-    cd ./{{PACKAGE}} && sui move build --skip-fetch-latest-git-deps
+build-pkg PACKAGE ENV='mainnet':
+    sui move build --path "{{PACKAGE}}" -e "{{ENV}}"
 
 # Build both packages
 build:
@@ -25,8 +25,8 @@ build:
     @just build-pkg loyalty
 
 # Helper: Test a specific package
-test-pkg PACKAGE:
-    cd ./{{PACKAGE}} && sui move test --skip-fetch-latest-git-deps
+test-pkg PACKAGE ENV='mainnet':
+    sui move test --path "{{PACKAGE}}" -e "{{ENV}}"
 
 # Test both packages
 test:
@@ -37,8 +37,8 @@ test:
 
 
 # Helper: Test with coverage for a specific package
-test-cov-pkg PACKAGE:
-    cd ./{{PACKAGE}} && sui move test --coverage
+test-cov-pkg PACKAGE ENV='mainnet':
+    sui move test --path "{{PACKAGE}}" -e "{{ENV}}" --coverage
 
 # Run coverage tests on both packages
 test-cov:
@@ -61,6 +61,14 @@ test-report:
 
 # Build and test in one command
 build-test: build test
+
+# Check the token address used by a consumer package
+test-dependency ENV='mainnet':
+    python3 Tests/dependency/verify.py dependency "{{ENV}}"
+
+# Reproduce the published token module with Sui 1.59.1
+verify-token-bytecode:
+    python3 Tests/dependency/verify.py bytecode
 
 # Helper: Publish a specific package and log created objects (type:id) to the given file
 publish-log-pkg PACKAGE FILE:
