@@ -1,10 +1,43 @@
 # Talus Token
 
-US is the native token of Talus Network on Sui. Its Move package is registered
-in MVR as `@talus/token`.
+US is the native token of Talus Network on Sui.
 
-US has 9 decimal places and was created with an initial supply of 10 billion
-tokens. Holders can burn tokens, permanently reducing the total supply.
+US has 9 decimal places and an initial supply of 10 billion tokens. Holders
+can burn their tokens, permanently reducing the total supply.
+
+## Use US in Move
+
+To use US in a Move package, add the token package through MVR in your
+`Move.toml`:
+
+```toml
+[dependencies]
+talus = { r.mvr = "@talus/token/1" }
+```
+
+Import `US` to work with `Coin<US>`:
+
+```move
+use sui::coin::Coin;
+use talus::us::US;
+```
+
+The MVR version suffix selects onchain package version 1. Build for Mainnet or
+Testnet to select the corresponding deployment.
+
+## Public interface
+
+```move
+public fun total_supply(treasury: &ProtectedTreasury): u64
+public fun burn(treasury: &mut ProtectedTreasury, coin: Coin<US>)
+```
+
+`total_supply` returns the current supply in base units, where one US equals
+1,000,000,000 units. `burn` consumes a `Coin<US>` and reduces supply by its value.
+It does not return the coin.
+
+Both functions use the shared `ProtectedTreasury` object, which holds the
+token's `TreasuryCap`. The token's metadata cannot be changed.
 
 ## Deployments
 
@@ -24,39 +57,6 @@ The canonical coin type is the corresponding package ID followed by
 | Testnet | `0xbc99a0672ffeb94ebde580c7e17fdb936030a5f759d7448b32ac47479f0a5851` |
 
 Use the package and treasury from the same network.
-
-## Public interface
-
-```move
-public fun total_supply(treasury: &ProtectedTreasury): u64
-public fun burn(treasury: &mut ProtectedTreasury, coin: Coin<US>)
-```
-
-`total_supply` returns the current supply in base units, where one US equals
-1,000,000,000 units. `burn` consumes a `Coin<US>` and reduces supply by its value.
-It does not return the coin.
-
-Both functions use the shared `ProtectedTreasury` object, which holds the
-token's `TreasuryCap`. The token's metadata cannot be changed.
-
-## Use through MVR
-
-Add the version 1 dependency to your package's `Move.toml`:
-
-```toml
-[dependencies]
-talus = { r.mvr = "@talus/token/1" }
-```
-
-Import the coin type with:
-
-```move
-use sui::coin::Coin;
-use talus::us::US;
-```
-
-The MVR version suffix selects onchain package version 1. Build for Mainnet or
-Testnet to select the corresponding deployment.
 
 ## Build and test
 
