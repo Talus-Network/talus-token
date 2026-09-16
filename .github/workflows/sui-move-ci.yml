@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 env:
-  SUI_REF: mainnet-v1.45.3
+  SUI_REF: testnet-v1.80.0
 
 jobs:
   build-and-test:
@@ -27,3 +27,23 @@ jobs:
       
       - name: Build and Test
         run: just build-test
+
+      - name: Check consumer deployments
+        run: |
+          just test-dependency mainnet
+          just test-dependency testnet
+
+  verify-token-bytecode:
+    name: Verify published token bytecode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v6
+
+      - name: Fetch release compiler
+        uses: ./.github/actions/fetch-sui-cli
+        with:
+          sui_ref: mainnet-v1.59.1
+
+      - name: Reproduce published module
+        run: python3 Tests/dependency/verify.py bytecode

@@ -23,7 +23,7 @@ talus-token/
 ## Contracts
 
 ### Talus Contract
-A custom coin implementation on the Sui blockchain.
+The US coin on Sui. See the [token documentation](talus/README.md) for deployment addresses, MVR usage, supply behavior, and the public interface.
 
 ### Loyalty Token Contract
 A custom token implementation on the Sui blockchain. Repeated used for every deposit pool instance.

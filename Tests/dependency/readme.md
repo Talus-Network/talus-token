@@ -1,53 +1,31 @@
-## Dependency Test Contract
-This package contains a test contract designed to verify dependencies between the talus package and this package.
+# Token consumer checks
 
-### Test Procedure
-1. Configure Client Environment
-Set up your Sui client for the desired network.
+This package imports `talus::us::US` and uses `Coin<US>`. It depends on the
+local token package so CI can check the source in the current pull request.
 
-Devnet Configuration:
+From the repository root, use Sui 1.80.0 and Python 3.11 or newer:
 
-RPC: `https://rpc.ssfn.devnet.production.taluslabs.dev`
-
-Faucet: `https://faucet.devnet.production.taluslabs.dev/gas`
-
-Explorer: `https://explorer.devnet.taluslabs.dev/`
-
-2. Fund Wallet
-Acquire at least two native SUI gas objects (coins) using the faucet link provided above or the Discord faucet.
-
-3. Mint US Tokens
-Retrieve the required Object IDs (Faucet ID, Token IDs) from the registry files below:
-
-Devnet: [objects.devnet.json](https://storage.googleapis.com/production-talus-tge-objects/v1.1.2/objects.devnet.json)
-
-Testnet: [objects.testnet.json](https://storage.googleapis.com/production-talus-tge-objects/v1.1.2/objects.testnet.json)
-
-Mainnet: [objects.mainnet.json](https://storage.googleapis.com/production-talus-tge-objects/v1.1.2/objects.mainnet.json)
-
-Mint Command: Replace variables (starting with $) with the actual IDs found in the JSON files above.
-
-```Bash
-sui client call --package <faucet package id> --module faucet --function mint \
-    --type-args <token package id>::us::US \
-    --type-args 0x2::sui::SUI \
-    --args <faucet object id> \
-    --args <sui coin id> \
-    --dry-run
+```sh
+just test-dependency mainnet
+just test-dependency testnet
 ```
 
-Important: After minting, record your US Token Object ID. Ensure the `<token package id>` used matches the address defined in ../../talus/Move.lock under the corresponding environment and the faucet is under the same deployment sequence.
+Each check builds the consumer, verifies its dependency address and token type,
+and rejects a token address from the other network. The expected deployments
+are checked against `talus/Published.toml`. The checks compile without submitting
+transactions or requiring a funded wallet.
 
-4. Publish and Test
-Publish the package and execute the dependency test function.
+To reproduce the deployed token module, use the Sui 1.59.1 binary:
 
-```Bash
-# 1. Publish the package
-sui client publish . --dry-run
-
-# 2. Call the test function
-# Replace <dependency package id> with the ID generated from the publish step
-# Replace <US token id> with the ID obtained in Step 3
-sui client call --package <dependency package id> --module test --function half --arg
-
+```sh
+python3 Tests/dependency/verify.py --sui /path/to/sui bytecode
 ```
+
+This compiles the current token sources in a temporary directory and compares
+the module SHA256 with the bytes from the Mainnet and Testnet publications.
+The compiler uses its pinned framework dependencies. The repository's current
+lockfile remains intact. The expected hash and publication transaction digests
+are recorded in `verify.py`.
+
+These checks use a local dependency. See the [token README](../../talus/README.md)
+for the MVR dependency used by applications.

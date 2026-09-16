@@ -45,6 +45,10 @@ build/
 
 #Move Lock
 *.lock
+!Tests/dependency/Move.lock
+
+# Temporary publication records
+Pub.*.toml
 
 # Move coverage and tracing information
 .trace

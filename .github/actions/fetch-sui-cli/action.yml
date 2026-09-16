@@ -7,13 +7,34 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - run: mkdir -p /home/runner/.local/bin
+    - name: Install Sui CLI
       shell: bash
-    - run: wget "https://github.com/MystenLabs/sui/releases/download/${{ inputs.sui_ref }}/sui-${{ inputs.sui_ref }}-ubuntu-x86_64.tgz"
-      shell: bash
-    - run: tar -xvzf "sui-${{ inputs.sui_ref }}-ubuntu-x86_64.tgz" -C /home/runner/.local/bin
-      shell: bash
-    - run: sudo chmod +x /home/runner/.local/bin/sui
-      shell: bash
-    - run: sui --version
-      shell: bash
+      env:
+        SUI_REF: ${{ inputs.sui_ref }}
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/sui-$SUI_REF.tgz"
+        bin_dir="$RUNNER_TEMP/sui-$SUI_REF/bin"
+        mkdir -p "$bin_dir"
+        curl --fail --location --retry 3 \
+          "https://github.com/MystenLabs/sui/releases/download/$SUI_REF/sui-$SUI_REF-ubuntu-x86_64.tgz" \
+          --output "$archive"
+        python3 - "$archive" "$bin_dir/sui" <<'PY'
+        import pathlib
+        import shutil
+        import sys
+        import tarfile
+
+        with tarfile.open(sys.argv[1], "r:gz") as archive:
+            binaries = [
+                member for member in archive.getmembers()
+                if member.isfile() and pathlib.PurePosixPath(member.name).name == "sui"
+            ]
+            if len(binaries) != 1:
+                raise SystemExit("Expected exactly one Sui binary in the release archive")
+            with archive.extractfile(binaries[0]) as source, open(sys.argv[2], "wb") as target:
+                shutil.copyfileobj(source, target)
+        PY
+        chmod +x "$bin_dir/sui"
+        echo "$bin_dir" >> "$GITHUB_PATH"
+        "$bin_dir/sui" --version
