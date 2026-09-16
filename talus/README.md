@@ -1,12 +1,10 @@
 # Talus Token
 
-This package defines the Talus Network US coin on Sui, registered in MVR as
-`@talus/token`. Its Move type is `talus::us::US`. It has 9 decimals, so one US
-equals 1,000,000,000 base units.
+US is the native token of Talus Network on Sui. Its Move package is registered
+in MVR as `@talus/token`.
 
-Initialization minted 10,000,000,000 US. Holders can burn their coins, reducing
-total supply. The TreasuryCap is stored under the shared ProtectedTreasury
-object, and CoinMetadata is frozen.
+US has 9 decimal places and was created with an initial supply of 10 billion
+tokens. Holders can burn tokens, permanently reducing the total supply.
 
 ## Deployments
 
@@ -34,8 +32,12 @@ public fun total_supply(treasury: &ProtectedTreasury): u64
 public fun burn(treasury: &mut ProtectedTreasury, coin: Coin<US>)
 ```
 
-`total_supply` returns the current supply in base units. `burn` consumes a
-`Coin<US>` and reduces supply by its value. It does not return the coin.
+`total_supply` returns the current supply in base units, where one US equals
+1,000,000,000 units. `burn` consumes a `Coin<US>` and reduces supply by its value.
+It does not return the coin.
+
+Both functions use the shared `ProtectedTreasury` object, which holds the
+token's `TreasuryCap`. The token's metadata cannot be changed.
 
 ## Use through MVR
 
