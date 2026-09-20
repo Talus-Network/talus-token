@@ -86,6 +86,8 @@ deposit_pool::deposit_pool::deposit(pool, base_coin, term_days, clock, recipient
 deposit_pool::deposit_pool::withdrawal(pool, receipt, clock, ctx);
 ```
 
+`do_deposit` and `do_withdraw` allows PTB operation, while the `do_deposit` usually should be used only when the pool enabled receipt wrapper, otherwise no method can consume the receipt.
+
 ### Reward Pool Module
 
 The reward pool module manages reward pools and allows users to claim rewards by spending loyalty tokens. Pools can be refreshed with more rewards, and events are emitted for transparency.
@@ -105,6 +107,7 @@ deposit_pool::reward_program::reward_fresh(pool, additional_reward_coin);
 deposit_pool::reward_program::claim(pool, loyalty_token, policy, Some(minimum_expected_reward), ctx);
 ```
 
+`do_claim` can be used for PTB operation.
 ## Deployment
 
 The project includes an automated deployment script that:

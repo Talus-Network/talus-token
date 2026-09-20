@@ -2,6 +2,7 @@
 /// Users can lock their tokens for different time periods with varying APY rates.
 module deposit_pool::deposit_pool;
 
+use std::option::{none, some};
 use std::u128::pow;
 use sui::bag::{Self, Bag};
 use sui::balance::{zero, Balance};
@@ -10,7 +11,7 @@ use sui::coin::{TreasuryCap, Coin};
 use sui::dynamic_field as df;
 use sui::object::id;
 use sui::table::{Self, Table};
-use sui::token;
+use sui::token::{Self, Token};
 
 // ===================== Error Codes================
 /// Error when caller is not the admin
@@ -33,10 +34,12 @@ const EApyMismatched: u64 = 7;
 const ENotSupportExtendTerm: u64 = 8;
 /// Error when user tries to extend term with wrong parameters;
 const EInvalidExtendTerm: u64 = 9;
+/// Error when the user tries to create a receipt wrapper that is not supported;
+const ENotSupportReceiptWrapper: u64 = 10;
 
 // ====================== Const =================
 /// Current version of the contract
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 /// Milliseconds in one day (<2^27)
 const MS_PER_DAY: u64 = 86400000;
 const DAY_PER_YEAR: u128 = 365;
@@ -49,6 +52,13 @@ const KEY_WITHDRAWAL_PENDING: u8 = 2;
 
 /// Option key for enable upgrade the term for higher apy (bool), optional.
 const KEY_SUPPORT_TERM_EXTENSION: u8 = 3;
+
+/// Option key for enable upgrade the term for higher apy (bool), optional.
+const KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION: u8 = 4;
+
+/// Option key that affect the loyalty yield such that no additional reward
+/// after the lock term
+const KEY_STOP_POST_MATRURITY_YIELD: u8 = 5;
 
 public struct AdminCap has key, store {
     id: UID,
@@ -75,6 +85,21 @@ public struct DepositPool<phantom Base, phantom Loyalty> has key {
 
 /// Receipt given to users when they deposit tokens
 public struct Receipt has key {
+    id: UID,
+    /// ID of the pool where deposit was made
+    pool_id: ID,
+    /// Amount of base tokens deposited
+    amount: u64,
+    /// Timestamp when deposit was made
+    issue_at_ms: u64,
+    /// Timestamp when lock period ends
+    mature_at_ms: u64,
+    /// a shifted apy, need to be divided by 10**`pool.rate_decimal`
+    apy: u16,
+}
+
+/// Receipt given to users when they deposit tokens
+public struct ReceiptWrapper has key, store {
     id: UID,
     /// ID of the pool where deposit was made
     pool_id: ID,
@@ -135,6 +160,20 @@ public fun deposit<Base, Loyalty>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    transfer::transfer(
+        pool.do_deposit(coin, term, expected_apy, clock, ctx),
+        recipient,
+    );
+}
+
+public fun do_deposit<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    coin: Coin<Base>,
+    term: u32,
+    expected_apy: Option<u16>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Receipt {
     assert!(pool.version == VERSION, EWrongVersion);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
@@ -146,19 +185,18 @@ public fun deposit<Base, Loyalty>(
     // if expected_apy has some value, ensure fetched apy is higer.
     assert!(expected_apy.destroy_or!(0)<=apy, EApyMismatched);
 
-    transfer::transfer(
-        Receipt {
-            id: object::new(ctx),
-            pool_id: object::id(pool),
-            amount: coin.value(),
-            issue_at_ms: clock.timestamp_ms(),
-            mature_at_ms: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
-            apy: apy,
-        },
-        recipient,
-    );
+    let receipt = Receipt {
+        id: object::new(ctx),
+        pool_id: object::id(pool),
+        amount: coin.value(),
+        issue_at_ms: clock.timestamp_ms(),
+        mature_at_ms: clock.timestamp_ms()+(lock_term as u64)*MS_PER_DAY, // secure within u64
+        apy: apy,
+    };
 
     pool.balance.join(coin.into_balance());
+
+    receipt
 }
 
 /// Withdraws base tokens and claims loyalty tokens if eligible
@@ -168,6 +206,25 @@ entry fun withdraw<Base, Loyalty>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let (coin, token, receipt) = pool.do_withdrawal(receipt, clock, ctx);
+
+    coin.destroy!(|c| transfer::public_transfer(c, ctx.sender()));
+
+    token.destroy!(|token| {
+        let req = token::transfer(token, ctx.sender(), ctx);
+        token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
+    });
+
+    // if receipt exists, prior two are none, so this one need to be safely transferred to the sender.
+    receipt.destroy!(|r| transfer::transfer(r, ctx.sender()));
+}
+
+public fun do_withdrawal<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    receipt: Receipt,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (Option<Coin<Base>>, Option<Token<Loyalty>>, Option<Receipt>) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
 
@@ -190,8 +247,7 @@ entry fun withdraw<Base, Loyalty>(
                 id(&receipt),
                 clock.timestamp_ms() + pool.options[KEY_WITHDRAWAL_PENDING],
             );
-            transfer::transfer(receipt, ctx.sender());
-            return
+            return (none(), none(), some(receipt))
         }
     };
 
@@ -205,21 +261,24 @@ entry fun withdraw<Base, Loyalty>(
         issue_at_ms,
         apy,
     );
-    if (token_amount>0) {
-        let token = token::mint<Loyalty>(
-            &mut pool.treasury_cap,
-            token_amount,
-            ctx,
-        );
-        let req = token::transfer(token, ctx.sender(), ctx);
-
-        token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
-    };
 
     id.delete();
+    let value = pool.balance.split(amount).into_coin(ctx);
+    if (token_amount>0) {
+        return (
+            some(value),
+            some(
+                token::mint<Loyalty>(
+                    &mut pool.treasury_cap,
+                    token_amount,
+                    ctx,
+                ),
+            ),
+            none(),
+        )
+    };
 
-    // return base
-    transfer::public_transfer(pool.balance.split(amount).into_coin(ctx), ctx.sender());
+    (some(value), none(), none())
 }
 
 /// Upgrade the term of premature deposit receipt if support
@@ -343,6 +402,75 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
     transfer::public_transfer(policy_cap, tx_context::sender(ctx));
 }
 
+// allow to store a receipt through a wrapper
+public fun enable_receipt_wrapper<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &mut AdminCap,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+
+    pool.options.add(KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION, true);
+}
+
+// allow to store a receipt through a wrapper
+public fun stop_post_maturity_yield<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &mut AdminCap,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+
+    pool.options.add(KEY_STOP_POST_MATRURITY_YIELD, true);
+}
+
+public fun receipt_to_wrapper<Base, Loyalty>(
+    pool: &DepositPool<Base, Loyalty>,
+    receipt: Receipt,
+    ctx: &mut TxContext,
+): ReceiptWrapper {
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(receipt.pool_id == object::id(pool), EWrongPool);
+    assert!(pool.options.contains(KEY_SUPPORT_RECEIPT_WRAPER_EXTENSION), ENotSupportReceiptWrapper);
+
+    // consume receipt
+    let Receipt { id, pool_id, amount, issue_at_ms, mature_at_ms, apy } = receipt;
+    id.delete();
+
+    // create receipt wrapper
+    ReceiptWrapper {
+        id: object::new(ctx),
+        pool_id,
+        amount,
+        issue_at_ms,
+        mature_at_ms,
+        apy,
+    }
+}
+
+public fun wrapper_to_receipt<Base, Loyalty>(
+    pool: &DepositPool<Base, Loyalty>,
+    wrapper: ReceiptWrapper,
+    ctx: &mut TxContext,
+): Receipt {
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(wrapper.pool_id == object::id(pool), EWrongPool);
+
+    // consume receipt wrapper
+    let ReceiptWrapper { id, pool_id, amount, issue_at_ms, mature_at_ms, apy } = wrapper;
+    id.delete();
+
+    // create receipt
+    Receipt {
+        id: object::new(ctx),
+        pool_id,
+        amount,
+        issue_at_ms,
+        mature_at_ms,
+        apy,
+    }
+}
+
 /// Upgrades the pool to a new version
 entry fun migrate<Base, Loyalty>(pool: &mut DepositPool<Base, Loyalty>, admin: &AdminCap) {
     assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
@@ -370,7 +498,12 @@ fun calculate_token_amount<Base, Loyalty>(
         return 0
     };
 
-    let eligible_term: u64 = (withdraw_at_ms - issue_at_ms)/MS_PER_DAY; // <u32
+    // if STOP post maturity yield, than the yield is fixed according to maturity term
+    let eligible_term: u64 = if (pool.options.contains(KEY_STOP_POST_MATRURITY_YIELD)) {
+        (mature_at_ms - issue_at_ms)/MS_PER_DAY // <u32
+    } else {
+        (withdraw_at_ms - issue_at_ms)/MS_PER_DAY // <u32
+    };
 
     let yearly_return = (amount as u128 * (apy as u128))/(10_u128.pow(pool.rate_decimal)); // <u80
     ((eligible_term as u128 * yearly_return)/DAY_PER_YEAR).try_as_u64().destroy_or!(0)
