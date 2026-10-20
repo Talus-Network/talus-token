@@ -6,18 +6,32 @@ use deposit_pool::deposit_pool::{
     AdminCap,
     DepositPool,
     Receipt,
+    new_vesting,
+    VestingCreatedEvent,
+    VestingStoppedEvent,
+    vesting_options_length_for_testing,
+    vesting_created_event_matches_for_testing,
     ENotSupportEarlyWithdrawal,
     EPendingWithdrawal,
     ERemovingDefaultTerm,
     EApyMismatched,
     ENotSupportExtendTerm,
-    EInvalidExtendTerm
+    EInvalidExtendTerm,
+    ENotAdmin,
+    EInvalidVestingPlan,
+    ESealedVestingPool,
+    EVestingStopNotAllowed,
+    EVestingAlreadyStopped,
+    EVestingStopped,
 };
 use std::option::{none, some};
-use sui::clock;
+use std::vector;
+use sui::clock::{Self, Clock};
 use sui::coin::{Self, create_treasury_cap_for_testing, Coin};
+use sui::event;
 use sui::test_scenario::{Self as ts, Scenario};
-use sui::token::Token;
+use sui::token::{Token, TokenPolicyCap};
+use sui::transfer;
 
 const ADMIN: address = @0xA11ce;
 const USER: address = @0xB0B;
@@ -27,9 +41,12 @@ const Lock_DAY: u32 = 60;
 const Pending_DAY: u32 = 7;
 const MS_PER_DAY: u64 = 86400000;
 const DEFAULT_DECIMAL: u8 = 2;
+const MAX_U64: u64 = 18446744073709551615;
 
 public struct Loyalty has drop {}
 public struct Base has drop {}
+public struct OtherBase has drop {}
+public struct RewardPolicy has drop {}
 
 #[test]
 fun test_pool_initialization() {
@@ -45,6 +62,578 @@ fun test_pool_initialization() {
         ts::return_shared(pool);
     };
 
+    scenario.end();
+}
+
+#[test]
+fun test_vesting_creation_transfers_fixed_zero_apy_receipts() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+    assert!(event::events_by_type<VestingCreatedEvent>().length() == 1, 0);
+
+    scenario.next_tx(ADMIN);
+    let admin = scenario.take_from_sender<AdminCap>();
+    scenario.return_to_sender(admin);
+    let pool = scenario.take_shared<DepositPool<Base, Loyalty>>();
+    assert!(vesting_options_length_for_testing(&pool) == 4, 0);
+    ts::return_shared(pool);
+
+    scenario.next_tx(USER);
+    let first = ts::take_from_address<Receipt>(&scenario, USER);
+    let second = ts::take_from_address<Receipt>(&scenario, USER);
+    let third = ts::take_from_address<Receipt>(&scenario, USER);
+    ts::return_to_address(USER, first);
+    ts::return_to_address(USER, second);
+    ts::return_to_address(USER, third);
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_future_cliff_only_vesting_is_claimable_at_start() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        600,
+        2000,
+        600,
+        0,
+        vector[],
+        true,
+    );
+    assert!(!ts::has_most_recent_for_address<Coin<Base>>(USER), 0);
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+    clock::set_for_testing(&mut clock, 2000);
+    pool.withdraw(receipt, &clock, scenario.ctx());
+    ts::return_shared(pool);
+
+    scenario.next_tx(USER);
+    let claimed = ts::take_from_address<Coin<Base>>(&scenario, USER);
+    assert!(coin::value(&claimed) == 600, 1);
+    coin::burn_for_testing(claimed);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_equal_clock_start_accepts_irregular_dates_and_emits_scalar_event_data() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        500,
+        1000,
+        300,
+        100,
+        vector[1001u64, 1041],
+        true,
+    );
+    let mut created_events = event::events_by_type<VestingCreatedEvent>();
+    let created_event = vector::pop_back(&mut created_events);
+    assert!(
+        vesting_created_event_matches_for_testing(
+            created_event,
+            500,
+            vector[1001u64, 1041],
+            300,
+            100,
+        ),
+        0,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_zero_cliff_plan_has_only_later_receipt() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        600,
+        2000,
+        0,
+        600,
+        vector[3000u64],
+        true,
+    );
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+    assert!(!ts::has_most_recent_for_address<Receipt>(USER), 0);
+    clock::set_for_testing(&mut clock, 3000);
+    pool.withdraw(receipt, &clock, scenario.ctx());
+    ts::return_shared(pool);
+
+    scenario.next_tx(USER);
+    let claimed = ts::take_from_address<Coin<Base>>(&scenario, USER);
+    assert!(coin::value(&claimed) == 600, 1);
+    coin::burn_for_testing(claimed);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_empty_plan() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        1,
+        1000,
+        0,
+        0,
+        vector[],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_past_schedule_start() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        2,
+        999,
+        1,
+        1,
+        vector[2000u64],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_maturity_equal_to_start() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        1,
+        1000,
+        0,
+        1,
+        vector[1000u64],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_duplicate_maturities() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        2,
+        1000,
+        0,
+        1,
+        vector[2000u64, 2000],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_out_of_order_maturities() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        2,
+        1000,
+        0,
+        1,
+        vector[2002u64, 2001],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_zero_later_amount() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        1,
+        1000,
+        0,
+        0,
+        vector[2000u64],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure]
+fun test_vesting_multiplication_overflow_aborts() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        MAX_U64,
+        1000,
+        0,
+        MAX_U64,
+        vector[2000u64, 3000],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure]
+fun test_vesting_addition_overflow_aborts() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        MAX_U64,
+        1000,
+        MAX_U64,
+        1,
+        vector[2000u64],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_rejects_more_than_256_total_receipts_including_cliff() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    let mut maturities_ms = vector[];
+    let mut i = 0;
+    while (i < 256) {
+        vector::push_back(&mut maturities_ms, 1001 + i);
+        i = i + 1;
+    };
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        257,
+        1000,
+        1,
+        1,
+        maturities_ms,
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_vesting_accepts_256_total_receipts_including_cliff() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    let mut maturities_ms = vector[];
+    let mut i = 0;
+    while (i < 255) {
+        vector::push_back(&mut maturities_ms, 1001 + i);
+        i = i + 1;
+    };
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        256,
+        1000,
+        1,
+        1,
+        maturities_ms,
+        true,
+    );
+    assert!(event::events_by_type<VestingCreatedEvent>().length() == 1, 0);
+    scenario.next_tx(USER);
+    let mut i = 0;
+    while (i < 256) {
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+        ts::return_to_address(USER, receipt);
+        i = i + 1;
+    };
+    assert!(!ts::has_most_recent_for_address<Receipt>(USER), 1);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EInvalidVestingPlan)]
+fun test_vesting_creation_rejects_funding_mismatch() {
+    let mut scenario = ts::begin(ADMIN);
+    let clock = clock::create_for_testing(scenario.ctx());
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        599,
+        1000,
+        0,
+        200,
+        vector[2000u64, 3000, 4000],
+        true,
+    );
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = ENotSupportEarlyWithdrawal)]
+fun test_vesting_receipt_cannot_be_withdrawn_before_installment_maturity() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1999);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+    pool.withdraw(receipt, &clock, scenario.ctx());
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = ESealedVestingPool)]
+fun test_vesting_pool_rejects_direct_deposit() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let funding = coin::mint_for_testing<Base>(1, scenario.ctx());
+    pool.deposit(funding, 0, USER, none(), &clock, scenario.ctx());
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EVestingStopNotAllowed)]
+fun test_vesting_stop_requires_opt_in() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, false);
+
+    scenario.next_tx(ADMIN);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+    pool.stop_vesting(&admin, &clock, scenario.ctx());
+    ts::return_to_address(ADMIN, admin);
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_vesting_stop_returns_matured_unclaimed_principal() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 2000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+        pool.stop_vesting(&admin, &clock, scenario.ctx());
+        assert!(event::events_by_type<VestingStoppedEvent>().length() == 1, 0);
+        ts::return_to_address(ADMIN, admin);
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(ADMIN);
+    let refund = ts::take_from_address<Coin<Base>>(&scenario, ADMIN);
+    assert!(coin::value(&refund) == 600, 0);
+    coin::burn_for_testing(refund);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = ENotAdmin)]
+fun test_vesting_stop_rejects_wrong_admin_cap() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+
+    let unrelated_cap = create_treasury_cap_for_testing<Loyalty>(scenario.ctx());
+    deposit_pool::new<OtherBase, Loyalty>(
+        unrelated_cap,
+        Base_APY,
+        none(),
+        false,
+        0,
+        scenario.ctx(),
+    );
+    scenario.next_tx(ADMIN);
+    let unrelated_admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+    transfer::public_transfer(unrelated_admin, USER);
+
+    scenario.next_tx(ADMIN);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let wrong_admin = ts::take_from_address<AdminCap>(&scenario, USER);
+    pool.stop_vesting(&wrong_admin, &clock, scenario.ctx());
+    ts::return_to_address(USER, wrong_admin);
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EVestingAlreadyStopped)]
+fun test_vesting_stop_rejects_repeated_stop() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+        pool.stop_vesting(&admin, &clock, scenario.ctx());
+        ts::return_to_address(ADMIN, admin);
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(ADMIN);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+    pool.stop_vesting(&admin, &clock, scenario.ctx());
+    ts::return_to_address(ADMIN, admin);
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = ESealedVestingPool)]
+fun test_vesting_receipt_cannot_upgrade_term() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let mut receipt = ts::take_from_address<Receipt>(&scenario, USER);
+    pool.upgrade_term(&mut receipt, 1, none(), &clock);
+    ts::return_to_address(USER, receipt);
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_partial_vesting_claim_then_stop_conserves_funding() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+    clock::set_for_testing(&mut clock, 5000);
+
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+        pool.withdraw(receipt, &clock, scenario.ctx());
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(USER);
+    let claimed_coin = ts::take_from_address<Coin<Base>>(&scenario, USER);
+    let claimed_amount = coin::value(&claimed_coin);
+    assert!(claimed_amount > 0 && claimed_amount < 600, 1);
+    coin::burn_for_testing(claimed_coin);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+        pool.stop_vesting(&admin, &clock, scenario.ctx());
+        ts::return_to_address(ADMIN, admin);
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(ADMIN);
+    let refund = ts::take_from_address<Coin<Base>>(&scenario, ADMIN);
+    assert!(claimed_amount + coin::value(&refund) == 600, 2);
+    coin::burn_for_testing(refund);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = EVestingStopped)]
+fun test_stopped_vesting_receipt_cannot_be_withdrawn() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+        pool.stop_vesting(&admin, &clock, scenario.ctx());
+        ts::return_to_address(ADMIN, admin);
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(USER);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+    pool.withdraw(receipt, &clock, scenario.ctx());
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
     scenario.end();
 }
 
@@ -862,6 +1451,143 @@ fun test_cancel_pending_withdrawal() {
     scenario.end();
 }
 
+#[test]
+#[expected_failure(abort_code = ESealedVestingPool)]
+fun test_vesting_pool_rejects_reward_program_attachment() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(ADMIN);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    let mut admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+    pool.add_reward_program<RewardPolicy, Base, Loyalty>(&mut admin, scenario.ctx());
+    ts::return_to_address(ADMIN, admin);
+    ts::return_shared(pool);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_normal_pool_accepts_reward_program() {
+    let mut scenario = init_deposit_pool(true, 0);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let mut admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+        pool.add_reward_program<RewardPolicy, Base, Loyalty>(&mut admin, scenario.ctx());
+        ts::return_to_address(ADMIN, admin);
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(ADMIN);
+    assert!(ts::has_most_recent_for_address<TokenPolicyCap<Loyalty>>(ADMIN), 0);
+    scenario.end();
+}
+
+#[test]
+fun test_vesting_claims_skip_reward_mint_for_cliff_and_later_rows() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        5,
+        2000,
+        2,
+        3,
+        vector[3000u64],
+        true,
+    );
+    clock::set_for_testing(&mut clock, 3000);
+
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+        pool.withdraw(receipt, &clock, scenario.ctx());
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(USER);
+    let cliff_principal = ts::take_from_address<Coin<Base>>(&scenario, USER);
+    let first_amount = coin::value(&cliff_principal);
+    assert!(first_amount == 2 || first_amount == 3, 0);
+    assert!(!ts::has_most_recent_for_address<Token<Loyalty>>(USER), 1);
+    coin::burn_for_testing(cliff_principal);
+    clock::set_for_testing(&mut clock, 3000);
+
+    scenario.next_tx(USER);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+        pool.withdraw(receipt, &clock, scenario.ctx());
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(USER);
+    let delayed_principal = ts::take_from_address<Coin<Base>>(&scenario, USER);
+    let second_amount = coin::value(&delayed_principal);
+    assert!(second_amount == 2 || second_amount == 3, 2);
+    assert!(first_amount + second_amount == 5, 3);
+    assert!(!ts::has_most_recent_for_address<Token<Loyalty>>(USER), 4);
+    coin::burn_for_testing(delayed_principal);
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+fun create_test_vesting(
+    scenario: &mut Scenario,
+    clock: &Clock,
+    funding_amount: u64,
+    stop_allowed: bool,
+) {
+    let schedule_start_ms = clock.timestamp_ms() + 1000;
+    let maturities_ms = vector[
+        schedule_start_ms + 1000,
+        schedule_start_ms + 2000,
+        schedule_start_ms + 3000,
+    ];
+    create_test_vesting_plan(
+        scenario,
+        clock,
+        funding_amount,
+        schedule_start_ms,
+        0,
+        200,
+        maturities_ms,
+        stop_allowed,
+    );
+}
+fun create_test_vesting_plan(
+    scenario: &mut Scenario,
+    clock: &Clock,
+    funding_amount: u64,
+    schedule_start_ms: u64,
+    cliff_amount: u64,
+    vest_amount: u64,
+    maturities_ms: vector<u64>,
+    stop_allowed: bool,
+) {
+    let loyalty_cap = create_treasury_cap_for_testing<Loyalty>(scenario.ctx());
+    let funding = coin::mint_for_testing<Base>(funding_amount, scenario.ctx());
+    new_vesting(
+        loyalty_cap,
+        funding,
+        USER,
+        schedule_start_ms,
+        cliff_amount,
+        vest_amount,
+        maturities_ms,
+        stop_allowed,
+        clock,
+        scenario.ctx(),
+    );
+}
 fun init_deposit_pool(ealry_withdrawal: bool, pending: u32): Scenario {
     let mut scenario = ts::begin(ADMIN);
     // Create treasury cap for Loyalty token
