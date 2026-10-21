@@ -8,6 +8,7 @@ use sui::balance::{zero, Balance};
 use sui::clock::Clock;
 use sui::coin::{TreasuryCap, Coin};
 use sui::dynamic_field as df;
+use sui::event;
 use sui::object::id;
 use sui::table::{Self, Table};
 use sui::token;
@@ -33,10 +34,22 @@ const EApyMismatched: u64 = 7;
 const ENotSupportExtendTerm: u64 = 8;
 /// Error when user tries to extend term with wrong parameters;
 const EInvalidExtendTerm: u64 = 9;
+/// A vesting plan is malformed or exceeds the supported receipt count.
+const EInvalidVestingPlan: u64 = 10;
+/// A fixed vesting pool cannot be changed through staking operations.
+const ESealedVestingPool: u64 = 11;
+/// Stop is only available on a vesting pool.
+const ENotVestingPool: u64 = 12;
+/// This vesting pool was not created with stop permission.
+const EVestingStopNotAllowed: u64 = 13;
+/// This vesting pool has already been stopped.
+const EVestingAlreadyStopped: u64 = 14;
+/// This receipt belongs to a stopped vesting pool.
+const EVestingStopped: u64 = 15;
 
 // ====================== Const =================
 /// Current version of the contract
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 /// Milliseconds in one day (<2^27)
 const MS_PER_DAY: u64 = 86400000;
 const DAY_PER_YEAR: u128 = 365;
@@ -49,6 +62,36 @@ const KEY_WITHDRAWAL_PENDING: u8 = 2;
 
 /// Option key for enable upgrade the term for higher apy (bool), optional.
 const KEY_SUPPORT_TERM_EXTENSION: u8 = 3;
+
+/// Vesting marker and immutable stop permission/state stored in the options Bag.
+const KEY_VESTING_STOP_ALLOWED: u8 = 5;
+const KEY_VESTING_STOPPED: u8 = 6;
+
+/// maximum receipts an vesting schedule can support.
+const MAX_VESTING_RECEIPTS: u64 = 256;
+
+public struct VestingCreatedEvent has copy, drop {
+    pool_id: ID,
+    admin_cap_id: ID,
+    creator: address,
+    recipient: address,
+    created_at_ms: u64,
+    schedule_start_ms: u64,
+    stop_allowed: bool,
+    receipt_ids: vector<ID>,
+    amounts: u64,
+    maturities_ms: vector<u64>,
+    cliff_amount: u64,
+    vest_amount: u64,
+}
+
+public struct VestingStoppedEvent has copy, drop {
+    pool_id: ID,
+    admin_cap_id: ID,
+    stopped_by: address,
+    stopped_at_ms: u64,
+    refunded_amount: u64,
+}
 
 public struct AdminCap has key, store {
     id: UID,
@@ -124,6 +167,117 @@ entry fun new<Base, Loyalty>(
     transfer::transfer(admin, ctx.sender());
 }
 
+/// Creates and fully funds a fixed, zero-APY vesting allocation.
+/// A positive `cliff_amount` creates a receipt at `schedule_start_ms`; each
+/// later maturity releases `vest_amount` and must be later than the start.
+public fun new_vesting<Base, Loyalty>(
+    treasury_cap: TreasuryCap<Loyalty>,
+    funding: Coin<Base>,
+    recipient: address,
+    schedule_start_ms: u64,
+    cliff_amount: u64,
+    vest_amount: u64,
+    maturities_ms: vector<u64>,
+    stop_allowed: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let vesting_terms = vector::length(&maturities_ms);
+    let has_cliff = cliff_amount > 0;
+    let max_later_receipts = if (has_cliff) {
+        MAX_VESTING_RECEIPTS - 1
+    } else {
+        MAX_VESTING_RECEIPTS
+    };
+    assert!(vesting_terms <= max_later_receipts, EInvalidVestingPlan);
+    if (vesting_terms > 0) {
+        assert!(vest_amount > 0, EInvalidVestingPlan);
+    } else {
+        assert!(vest_amount == 0, EInvalidVestingPlan);
+    };
+
+    let total_amount = cliff_amount + (vesting_terms * vest_amount);
+    assert!(total_amount > 0 && total_amount == funding.value(), EInvalidVestingPlan);
+
+    let now_ms = clock.timestamp_ms();
+    assert!(schedule_start_ms >= now_ms, EInvalidVestingPlan);
+
+    let admin = AdminCap {
+        id: object::new(ctx),
+    };
+    let mut options = bag::new(ctx);
+    options.add(KEY_SUPPORT_EARLY_WITHDRAWAL, false);
+    options.add(KEY_VESTING_STOP_ALLOWED, stop_allowed);
+    options.add(KEY_VESTING_STOPPED, false);
+
+    let mut return_rates = table::new(ctx);
+    return_rates.add(0, 0);
+    let pool = DepositPool<Base, Loyalty> {
+        id: object::new(ctx),
+        balance: funding.into_balance(),
+        treasury_cap: treasury_cap,
+        admin_cap_id: object::id(&admin),
+        rate_decimal: 2,
+        return_rates: return_rates,
+        version: VERSION,
+        options: options,
+    };
+
+    let pool_id = object::id(&pool);
+    let admin_cap_id = object::id(&admin);
+    let mut receipt_ids: vector<ID> = vector[];
+
+    // Validate the full plan and total before creating/transferring any objects.
+
+    if (has_cliff) {
+        let receipt = Receipt {
+            id: object::new(ctx),
+            pool_id: pool_id,
+            amount: cliff_amount,
+            issue_at_ms: now_ms,
+            mature_at_ms: schedule_start_ms,
+            apy: 0,
+        };
+        receipt_ids.push_back(object::id(&receipt));
+        transfer::transfer(receipt, recipient);
+    };
+
+    let mut previous_maturity_ms = schedule_start_ms;
+    maturities_ms.do_ref!(|time| {
+        assert!(*time > previous_maturity_ms, EInvalidVestingPlan);
+
+        let receipt = Receipt {
+            id: object::new(ctx),
+            pool_id: pool_id,
+            amount: vest_amount,
+            issue_at_ms: now_ms,
+            mature_at_ms: *time,
+            apy: 0,
+        };
+        receipt_ids.push_back(object::id(&receipt));
+        transfer::transfer(receipt, recipient);
+        previous_maturity_ms = *time;
+    });
+
+    event::emit(VestingCreatedEvent {
+        pool_id: pool_id,
+        admin_cap_id: admin_cap_id,
+        creator: ctx.sender(),
+        recipient: recipient,
+        created_at_ms: now_ms,
+        schedule_start_ms: schedule_start_ms,
+        stop_allowed: stop_allowed,
+        receipt_ids: receipt_ids,
+        amounts: total_amount,
+        maturities_ms: maturities_ms,
+        cliff_amount,
+        vest_amount,
+    });
+
+    transfer::share_object(pool);
+    transfer::transfer(admin, ctx.sender());
+}
+
 /// Deposits base tokens into the pool and receives a receipt
 /// term refers to the number of days needed to pass for valid return value
 public fun deposit<Base, Loyalty>(
@@ -136,6 +290,7 @@ public fun deposit<Base, Loyalty>(
     ctx: &mut TxContext,
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
+    assert!(!pool.options.contains(KEY_VESTING_STOPPED), ESealedVestingPool);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
         (term as u64, pool.return_rates[term])
@@ -170,6 +325,9 @@ entry fun withdraw<Base, Loyalty>(
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
+    if (pool.options.contains(KEY_VESTING_STOPPED)) {
+        assert!(!pool.options[KEY_VESTING_STOPPED], EVestingStopped);
+    };
 
     // Check eligible for execute withdrawal. Option always exists as this immutable option
     // was added during pool creation
@@ -180,7 +338,7 @@ entry fun withdraw<Base, Loyalty>(
     // Check if withdrawl requirement pending window.
     if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         // if pending exists
-        if (df::exists_(&pool.id, id(&receipt))) {
+        if (df::exists(&pool.id, id(&receipt))) {
             // ensure pending is passed.
             assert!(*df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(), EPendingWithdrawal);
         } else {
@@ -197,29 +355,104 @@ entry fun withdraw<Base, Loyalty>(
 
     // consume receipt
     let Receipt { id, .., amount, issue_at_ms, mature_at_ms, apy } = receipt;
-    let token_amount = pool.calculate_token_amount(
-        clock,
-        id.to_inner(),
-        amount,
-        mature_at_ms,
-        issue_at_ms,
-        apy,
-    );
-    if (token_amount>0) {
-        let token = token::mint<Loyalty>(
-            &mut pool.treasury_cap,
-            token_amount,
-            ctx,
+    if (!pool.options.contains(KEY_VESTING_STOPPED)) {
+        let token_amount = pool.calculate_token_amount(
+            clock,
+            id.to_inner(),
+            amount,
+            mature_at_ms,
+            issue_at_ms,
+            apy,
         );
-        let req = token::transfer(token, ctx.sender(), ctx);
+        if (token_amount>0) {
+            let token = token::mint<Loyalty>(
+                &mut pool.treasury_cap,
+                token_amount,
+                ctx,
+            );
+            let req = token::transfer(token, ctx.sender(), ctx);
 
-        token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
+            token::confirm_with_treasury_cap(&mut pool.treasury_cap, req, ctx);
+        };
     };
 
     id.delete();
 
     // return base
     transfer::public_transfer(pool.balance.split(amount).into_coin(ctx), ctx.sender());
+}
+
+/// Stops an opted-in vesting pool and returns its complete remaining balance to
+/// the address that supplied the matching AdminCap.
+public fun stop_vesting<Base, Loyalty>(
+    pool: &mut DepositPool<Base, Loyalty>,
+    admin: &AdminCap,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
+    assert!(pool.version == VERSION, EWrongVersion);
+    assert!(pool.options.contains(KEY_VESTING_STOPPED), ENotVestingPool);
+    assert!(pool.options[KEY_VESTING_STOP_ALLOWED], EVestingStopNotAllowed);
+    assert!(!pool.options[KEY_VESTING_STOPPED], EVestingAlreadyStopped);
+
+    let stopped_at_ms = clock.timestamp_ms();
+    let refunded_amount = pool.balance.value();
+    *bag::borrow_mut<u8, bool>(&mut pool.options, KEY_VESTING_STOPPED) = true;
+
+    if (refunded_amount > 0) {
+        transfer::public_transfer(
+            pool.balance.split(refunded_amount).into_coin(ctx),
+            ctx.sender(),
+        );
+    };
+
+    event::emit(VestingStoppedEvent {
+        pool_id: object::id(pool),
+        admin_cap_id: object::id(admin),
+        stopped_by: ctx.sender(),
+        stopped_at_ms: stopped_at_ms,
+        refunded_amount: refunded_amount,
+    });
+}
+
+#[test_only]
+public fun vesting_pool_options_length_for_testing<Base, Loyalty>(
+    pool: &DepositPool<Base, Loyalty>,
+): u64 {
+    bag::length(&pool.options)
+}
+
+#[test_only]
+public fun vesting_created_event_matches_for_testing(
+    created_event: VestingCreatedEvent,
+    expected_total: u64,
+    expected_maturities_ms: vector<u64>,
+    expected_cliff_amount: u64,
+    expected_vest_amount: u64,
+): bool {
+    if (
+        created_event.amounts != expected_total
+            || created_event.cliff_amount != expected_cliff_amount
+            || created_event.vest_amount != expected_vest_amount
+            || vector::length(&created_event.maturities_ms)
+                != vector::length(&expected_maturities_ms)
+    ) {
+        return false
+    };
+
+    let mut maturity_index = 0;
+    while (maturity_index < vector::length(&expected_maturities_ms)) {
+        if (
+            *vector::borrow(&created_event.maturities_ms, maturity_index)
+                != *vector::borrow(&expected_maturities_ms, maturity_index)
+        ) {
+            return false
+        };
+        maturity_index = maturity_index + 1;
+    };
+
+    true
 }
 
 /// Upgrade the term of premature deposit receipt if support
@@ -232,6 +465,7 @@ public fun upgrade_term<Base, Loyalty>(
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
+    assert!(!pool.options.contains(KEY_VESTING_STOPPED), ESealedVestingPool);
 
     // if option does not exists, directly abort
     assert!(pool.options.contains(KEY_SUPPORT_TERM_EXTENSION), ENotSupportExtendTerm);
@@ -329,6 +563,7 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
 ) {
     assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
+    assert!(!pool.options.contains(KEY_VESTING_STOPPED), ESealedVestingPool);
 
     let (mut policy, policy_cap) = token::new_policy(&pool.treasury_cap, ctx);
 
@@ -360,6 +595,7 @@ fun calculate_token_amount<Base, Loyalty>(
     issue_at_ms: u64,
     apy: u16,
 ): u64 {
+    if (pool.options.contains(KEY_VESTING_STOPPED)) { return 0 };
     let withdraw_at_ms = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         df::remove(&mut pool.id, receipt_id) - pool.options[KEY_WITHDRAWAL_PENDING]
     } else {

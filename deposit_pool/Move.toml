@@ -1,6 +1,6 @@
 [package]
 name = "DepositPool"
-edition = "2024.beta" 
+edition = "2024" 
 authors = ["Talus Labs <hi@taluslabs.xyz>"]
 
 [addresses]
