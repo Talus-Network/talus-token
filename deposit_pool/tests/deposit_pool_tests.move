@@ -9,7 +9,7 @@ use deposit_pool::deposit_pool::{
     new_vesting,
     VestingCreatedEvent,
     VestingStoppedEvent,
-    vesting_options_length_for_testing,
+    vesting_pool_options_length_for_testing,
     vesting_created_event_matches_for_testing,
     ENotSupportEarlyWithdrawal,
     EPendingWithdrawal,
@@ -80,7 +80,7 @@ fun test_vesting_creation_transfers_fixed_zero_apy_receipts() {
     let admin = scenario.take_from_sender<AdminCap>();
     scenario.return_to_sender(admin);
     let pool = scenario.take_shared<DepositPool<Base, Loyalty>>();
-    assert!(vesting_options_length_for_testing(&pool) == 4, 0);
+    assert!(vesting_pool_options_length_for_testing(&pool) == 3, 0);
     ts::return_shared(pool);
 
     scenario.next_tx(USER);
@@ -390,7 +390,7 @@ fun test_vesting_accepts_256_total_receipts_including_cliff() {
     );
     assert!(event::events_by_type<VestingCreatedEvent>().length() == 1, 0);
     scenario.next_tx(USER);
-    let mut i = 0;
+    let mut i = 0_u64;
     while (i < 256) {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
         ts::return_to_address(USER, receipt);
@@ -1385,7 +1385,7 @@ fun test_pool_with_different_decimal() {
         let receipt = ts::take_from_address<Receipt>(&scenario, USER);
 
         // deposit for 1 year
-        clock.increment_for_testing(365 as u64 * MS_PER_DAY);
+        clock.increment_for_testing(365_u64 * MS_PER_DAY);
 
         pool.withdraw(
             receipt,
@@ -1405,7 +1405,7 @@ fun test_pool_with_different_decimal() {
 
         // Calculate expected rewards (deposit_amount * APY * days / 365)
         // apy is 3.5%
-        let expected_rewards = (Deposit as u128) * (350 as u128)/10_u128.pow(high_decimal);
+        let expected_rewards = (Deposit as u128) * (350_u64 as u128)/10_u128.pow(high_decimal);
         assert!(loyalty_tokens.value() == (expected_rewards as u64), 3);
 
         ts::return_to_address(USER, returned_coin);
@@ -1643,6 +1643,7 @@ fun create_test_vesting(
         stop_allowed,
     );
 }
+
 fun create_test_vesting_plan(
     scenario: &mut Scenario,
     clock: &Clock,
@@ -1797,7 +1798,7 @@ fun test_extend_term_success() {
     let reward = ts::take_from_address<Token<Loyalty>>(&scenario, USER);
     let expected_rewards =
         (
-            (((Deposit as u128) * (2*Base_APY as u128) )/10_u128.pow(DEFAULT_DECIMAL)) * (60 as u128),
+            (((Deposit as u128) * (2*Base_APY as u128) )/10_u128.pow(DEFAULT_DECIMAL)) * 60_u128 ,
         )/365;
 
     assert!(reward.value()==expected_rewards as u64, 2);

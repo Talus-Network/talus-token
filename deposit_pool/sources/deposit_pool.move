@@ -338,7 +338,7 @@ entry fun withdraw<Base, Loyalty>(
     // Check if withdrawl requirement pending window.
     if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         // if pending exists
-        if (df::exists_(&pool.id, id(&receipt))) {
+        if (df::exists(&pool.id, id(&receipt))) {
             // ensure pending is passed.
             assert!(*df::borrow(&pool.id, id(&receipt))<=clock.timestamp_ms(), EPendingWithdrawal);
         } else {
@@ -417,7 +417,7 @@ public fun stop_vesting<Base, Loyalty>(
 }
 
 #[test_only]
-public fun vesting_options_length_for_testing<Base, Loyalty>(
+public fun vesting_pool_options_length_for_testing<Base, Loyalty>(
     pool: &DepositPool<Base, Loyalty>,
 ): u64 {
     bag::length(&pool.options)
