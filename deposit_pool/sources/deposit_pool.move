@@ -64,12 +64,10 @@ const KEY_WITHDRAWAL_PENDING: u8 = 2;
 const KEY_SUPPORT_TERM_EXTENSION: u8 = 3;
 
 /// Vesting marker and immutable stop permission/state stored in the options Bag.
-const KEY_IS_VESTING: u8 = 4;
 const KEY_VESTING_STOP_ALLOWED: u8 = 5;
 const KEY_VESTING_STOPPED: u8 = 6;
-// Schedule and accounting metadata lives in authenticated events and receipt fields.
 
-/// Bound object creation and event payload size for a single vesting allocation.
+/// maximum receipts an vesting schedule can support.
 const MAX_VESTING_RECEIPTS: u64 = 256;
 
 public struct VestingCreatedEvent has copy, drop {
@@ -199,10 +197,7 @@ public fun new_vesting<Base, Loyalty>(
     };
 
     let total_amount = cliff_amount + (vesting_terms * vest_amount);
-    assert!(
-        total_amount > 0 && total_amount == funding.value(),
-        EInvalidVestingPlan,
-    );
+    assert!(total_amount > 0 && total_amount == funding.value(), EInvalidVestingPlan);
 
     let now_ms = clock.timestamp_ms();
     assert!(schedule_start_ms >= now_ms, EInvalidVestingPlan);
@@ -212,13 +207,12 @@ public fun new_vesting<Base, Loyalty>(
     };
     let mut options = bag::new(ctx);
     options.add(KEY_SUPPORT_EARLY_WITHDRAWAL, false);
-    options.add(KEY_IS_VESTING, true);
     options.add(KEY_VESTING_STOP_ALLOWED, stop_allowed);
     options.add(KEY_VESTING_STOPPED, false);
 
     let mut return_rates = table::new(ctx);
     return_rates.add(0, 0);
-    let mut pool = DepositPool<Base, Loyalty> {
+    let pool = DepositPool<Base, Loyalty> {
         id: object::new(ctx),
         balance: funding.into_balance(),
         treasury_cap: treasury_cap,
@@ -296,7 +290,7 @@ public fun deposit<Base, Loyalty>(
     ctx: &mut TxContext,
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
-    assert!(!pool.options.contains(KEY_IS_VESTING), ESealedVestingPool);
+    assert!(!pool.options.contains(KEY_VESTING_STOPPED), ESealedVestingPool);
 
     let (lock_term, apy) = if (pool.return_rates.contains(term)) {
         (term as u64, pool.return_rates[term])
@@ -361,7 +355,7 @@ entry fun withdraw<Base, Loyalty>(
 
     // consume receipt
     let Receipt { id, .., amount, issue_at_ms, mature_at_ms, apy } = receipt;
-    if (!pool.options.contains(KEY_IS_VESTING)) {
+    if (!pool.options.contains(KEY_VESTING_STOPPED)) {
         let token_amount = pool.calculate_token_amount(
             clock,
             id.to_inner(),
@@ -398,7 +392,7 @@ public fun stop_vesting<Base, Loyalty>(
 ) {
     assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
-    assert!(pool.options.contains(KEY_IS_VESTING), ENotVestingPool);
+    assert!(pool.options.contains(KEY_VESTING_STOPPED), ENotVestingPool);
     assert!(pool.options[KEY_VESTING_STOP_ALLOWED], EVestingStopNotAllowed);
     assert!(!pool.options[KEY_VESTING_STOPPED], EVestingAlreadyStopped);
 
@@ -471,7 +465,7 @@ public fun upgrade_term<Base, Loyalty>(
 ) {
     assert!(pool.version == VERSION, EWrongVersion);
     assert!(receipt.pool_id == object::id(pool), EWrongPool);
-    assert!(!pool.options.contains(KEY_IS_VESTING), ESealedVestingPool);
+    assert!(!pool.options.contains(KEY_VESTING_STOPPED), ESealedVestingPool);
 
     // if option does not exists, directly abort
     assert!(pool.options.contains(KEY_SUPPORT_TERM_EXTENSION), ENotSupportExtendTerm);
@@ -569,7 +563,7 @@ public fun add_reward_program<Policy: drop, Base, Loyalty>(
 ) {
     assert!(pool.admin_cap_id == object::id(admin), ENotAdmin);
     assert!(pool.version == VERSION, EWrongVersion);
-    assert!(!pool.options.contains(KEY_IS_VESTING), ESealedVestingPool);
+    assert!(!pool.options.contains(KEY_VESTING_STOPPED), ESealedVestingPool);
 
     let (mut policy, policy_cap) = token::new_policy(&pool.treasury_cap, ctx);
 
@@ -601,7 +595,7 @@ fun calculate_token_amount<Base, Loyalty>(
     issue_at_ms: u64,
     apy: u16,
 ): u64 {
-    if (pool.options.contains(KEY_IS_VESTING)) { return 0 };
+    if (pool.options.contains(KEY_VESTING_STOPPED)) { return 0 };
     let withdraw_at_ms = if (pool.options.contains(KEY_WITHDRAWAL_PENDING)) {
         df::remove(&mut pool.id, receipt_id) - pool.options[KEY_WITHDRAWAL_PENDING]
     } else {

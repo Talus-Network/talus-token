@@ -24,17 +24,20 @@ use deposit_pool::deposit_pool::{
     EVestingAlreadyStopped,
     EVestingStopped,
 };
+use std::bcs;
 use std::option::{none, some};
 use std::vector;
 use sui::clock::{Self, Clock};
 use sui::coin::{Self, create_treasury_cap_for_testing, Coin};
 use sui::event;
+use sui::object;
 use sui::test_scenario::{Self as ts, Scenario};
 use sui::token::{Token, TokenPolicyCap};
 use sui::transfer;
 
 const ADMIN: address = @0xA11ce;
 const USER: address = @0xB0B;
+const NEW_ADMIN: address = @0xC0FFEE;
 const Base_APY: u16 = 5;
 const Deposit: u64 = 1000000000;
 const Lock_DAY: u32 = 60;
@@ -490,6 +493,51 @@ fun test_vesting_stop_returns_matured_unclaimed_principal() {
     let refund = ts::take_from_address<Coin<Base>>(&scenario, ADMIN);
     assert!(coin::value(&refund) == 600, 0);
     coin::burn_for_testing(refund);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun test_transferred_matching_admin_cap_stops_and_receives_refund() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting(&mut scenario, &clock, 600, true);
+
+    scenario.next_tx(ADMIN);
+    let admin = ts::take_from_address<AdminCap>(&scenario, ADMIN);
+    transfer::public_transfer(admin, NEW_ADMIN);
+
+    scenario.next_tx(NEW_ADMIN);
+    {
+        let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+        let admin = ts::take_from_address<AdminCap>(&scenario, NEW_ADMIN);
+        pool.stop_vesting(&admin, &clock, scenario.ctx());
+
+        let stopped_events = event::events_by_type<VestingStoppedEvent>();
+        assert!(vector::length(&stopped_events) == 1, 0);
+        assert!(
+            vesting_stopped_event_sender_matches_for_testing(
+                vector::borrow(&stopped_events, 0),
+                &pool,
+                &admin,
+                NEW_ADMIN,
+            ),
+            1,
+        );
+
+        ts::return_to_address(NEW_ADMIN, admin);
+        ts::return_shared(pool);
+    };
+
+    scenario.next_tx(ADMIN);
+    assert!(!ts::has_most_recent_for_address<Coin<Base>>(ADMIN), 2);
+
+    scenario.next_tx(NEW_ADMIN);
+    let refund = ts::take_from_address<Coin<Base>>(&scenario, NEW_ADMIN);
+    assert!(coin::value(&refund) == 600, 3);
+    coin::burn_for_testing(refund);
+
     clock.destroy_for_testing();
     scenario.end();
 }
@@ -1502,40 +1550,72 @@ fun test_vesting_claims_skip_reward_mint_for_cliff_and_later_rows() {
         vector[3000u64],
         true,
     );
-    clock::set_for_testing(&mut clock, 3000);
+    clock::set_for_testing(&mut clock, 2000);
 
     scenario.next_tx(USER);
     {
+        let later_id = ts::most_recent_id_for_address<Receipt>(USER).destroy_some();
+        let later_receipt = ts::take_from_address_by_id<Receipt>(&scenario, USER, later_id);
+        let cliff_id = ts::most_recent_id_for_address<Receipt>(USER).destroy_some();
+        ts::return_to_address(USER, later_receipt);
+        let cliff_receipt = ts::take_from_address_by_id<Receipt>(&scenario, USER, cliff_id);
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
-        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
-        pool.withdraw(receipt, &clock, scenario.ctx());
+        pool.withdraw(cliff_receipt, &clock, scenario.ctx());
         ts::return_shared(pool);
     };
 
     scenario.next_tx(USER);
     let cliff_principal = ts::take_from_address<Coin<Base>>(&scenario, USER);
-    let first_amount = coin::value(&cliff_principal);
-    assert!(first_amount == 2 || first_amount == 3, 0);
+    assert!(coin::value(&cliff_principal) == 2, 0);
     assert!(!ts::has_most_recent_for_address<Token<Loyalty>>(USER), 1);
     coin::burn_for_testing(cliff_principal);
+
+    let later_id = ts::most_recent_id_for_address<Receipt>(USER).destroy_some();
+    assert!(ts::has_most_recent_for_address<Receipt>(USER), 2);
     clock::set_for_testing(&mut clock, 3000);
 
     scenario.next_tx(USER);
     {
         let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
-        let receipt = ts::take_from_address<Receipt>(&scenario, USER);
+        let receipt = ts::take_from_address_by_id<Receipt>(&scenario, USER, later_id);
         pool.withdraw(receipt, &clock, scenario.ctx());
         ts::return_shared(pool);
     };
 
     scenario.next_tx(USER);
     let delayed_principal = ts::take_from_address<Coin<Base>>(&scenario, USER);
-    let second_amount = coin::value(&delayed_principal);
-    assert!(second_amount == 2 || second_amount == 3, 2);
-    assert!(first_amount + second_amount == 5, 3);
+    assert!(coin::value(&delayed_principal) == 3, 3);
     assert!(!ts::has_most_recent_for_address<Token<Loyalty>>(USER), 4);
     coin::burn_for_testing(delayed_principal);
 
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = ENotSupportEarlyWithdrawal)]
+fun test_later_vesting_receipt_is_unavailable_at_cliff_maturity() {
+    let mut scenario = ts::begin(ADMIN);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock::set_for_testing(&mut clock, 1000);
+    create_test_vesting_plan(
+        &mut scenario,
+        &clock,
+        5,
+        2000,
+        2,
+        3,
+        vector[3000u64],
+        true,
+    );
+    clock::set_for_testing(&mut clock, 2000);
+
+    scenario.next_tx(USER);
+    let later_id = ts::most_recent_id_for_address<Receipt>(USER).destroy_some();
+    let receipt = ts::take_from_address_by_id<Receipt>(&scenario, USER, later_id);
+    let mut pool = ts::take_shared<DepositPool<Base, Loyalty>>(&scenario);
+    pool.withdraw(receipt, &clock, scenario.ctx());
+    ts::return_shared(pool);
     clock.destroy_for_testing();
     scenario.end();
 }
@@ -1588,6 +1668,42 @@ fun create_test_vesting_plan(
         scenario.ctx(),
     );
 }
+
+fun vesting_stopped_event_sender_matches_for_testing(
+    stopped_event: &VestingStoppedEvent,
+    pool: &DepositPool<Base, Loyalty>,
+    admin: &AdminCap,
+    expected_sender: address,
+): bool {
+    let stopped_event_bytes = bcs::to_bytes(stopped_event);
+    let pool_id = object::id(pool);
+    let admin_id = object::id(admin);
+    let pool_id_bytes = bcs::to_bytes(&pool_id);
+    let admin_id_bytes = bcs::to_bytes(&admin_id);
+    let expected_sender_bytes = bcs::to_bytes(&expected_sender);
+    let sender_offset = vector::length(&pool_id_bytes) + vector::length(&admin_id_bytes);
+
+    if (
+        vector::length(&stopped_event_bytes)
+            < sender_offset + vector::length(&expected_sender_bytes)
+    ) {
+        return false
+    };
+
+    let mut i = 0;
+    while (i < vector::length(&expected_sender_bytes)) {
+        if (
+            *vector::borrow(&stopped_event_bytes, sender_offset + i)
+                != *vector::borrow(&expected_sender_bytes, i)
+        ) {
+            return false
+        };
+        i = i + 1;
+    };
+
+    true
+}
+
 fun init_deposit_pool(ealry_withdrawal: bool, pending: u32): Scenario {
     let mut scenario = ts::begin(ADMIN);
     // Create treasury cap for Loyalty token
